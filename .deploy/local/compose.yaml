@@ -1,0 +1,19 @@
+name: club-manager-local
+
+services:
+  postgres:
+    image: postgres:18
+    healthcheck:
+      # `docker compose up --wait` blocks on this, so `make run` never races the
+      # database on a cold start.
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      # Keep in sync with database_url in config.example.yaml.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: club_manager
+    ports:
+      - "5432:5432"

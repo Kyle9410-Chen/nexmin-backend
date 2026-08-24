@@ -1,0 +1,43 @@
+debug: true
+host: localhost
+port: "8080"
+base_url: "http://localhost:8080"
+
+# Shared HS256 key used to verify incoming JWTs. Tokens are minted out-of-band.
+# Do not leave this at "default-secret": with debug false the server replaces that
+# value with a random UUID at startup, which silently invalidates every externally
+# minted token. Use a real secret here and something unguessable in deployments.
+secret: "local-dev-secret"
+
+database_url: "postgres://postgres:password@localhost:5432/club_manager?sslmode=disable"
+migration_source: "file://internal/database/migrations"
+allow_origins:
+  - "http://localhost:3000"
+
+# Where the OAuth callback sends the browser. Tokens arrive in the URL fragment:
+#   {frontend_url}#accessToken=...&refreshToken=...&expiresIn=900
+frontend_url: "http://localhost:3000"
+
+# Google OAuth client (Cloud Console -> Credentials -> OAuth 2.0 Client ID, type "Web").
+# The authorized redirect URI must be exactly {base_url}/api/auth/google/callback
+# Env: GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET
+google_oauth_client_id: ""
+google_oauth_client_secret: ""
+
+google_group:
+  # Base64-encoded service account JSON key. Leave empty to run without Google
+  # integration; the mailing list endpoints then return 503.
+  # Generate with: base64 -w0 service-account.json
+  # Env: GOOGLE_SERVICE_ACCOUNT_KEY
+  service_account_key: ""
+
+  # Workspace admin impersonated via domain-wide delegation. Required whenever
+  # service_account_key is set. Env: GOOGLE_IMPERSONATE_SUBJECT
+  impersonate_subject: ""
+
+  # How long a fetched member list is reused. Env: GOOGLE_GROUP_CACHE_TTL
+  cache_ttl: "5m"
+
+  # Only active, direct members of this mailing list may sign in. Leaving it empty
+  # refuses every login rather than allowing everyone. Env: GOOGLE_LOGIN_GROUP
+  login_group: ""
