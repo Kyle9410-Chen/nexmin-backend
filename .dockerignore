@@ -1,0 +1,17 @@
+# Keep the build context small: docs/api/node_modules alone is hundreds of megabytes.
+.git
+.github
+.deploy
+.idea
+.vscode
+.config
+bin
+docs
+node_modules
+tsp-output
+
+# Local settings never belong in an image.
+.env
+config.yaml
+
+*.md

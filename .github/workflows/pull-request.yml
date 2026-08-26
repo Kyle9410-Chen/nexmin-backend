@@ -1,0 +1,62 @@
+name: Backend Lint and Test
+
+# docs/api has its own check (api-docs-check.yml); a spec- or markdown-only change
+# does not need the Go toolchain.
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/api/**"
+      - "**.md"
+
+env:
+  GO_VERSION: "1.26.2"
+  SQLC_VERSION: "1.31.1"
+  GOLANGCI_LINT_VERSION: "v2.13"
+
+jobs:
+  Lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup sqlc
+        uses: sqlc-dev/setup-sqlc@v5
+        with:
+          sqlc-version: ${{ env.SQLC_VERSION }}
+
+      # The sqlc-generated files are gitignored, so nothing compiles until this runs.
+      - name: Generate
+        run: |
+          go mod download
+          make gen
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+  Test:
+    needs: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup sqlc
+        uses: sqlc-dev/setup-sqlc@v5
+        with:
+          sqlc-version: ${{ env.SQLC_VERSION }}
+
+      - name: Test
+        run: make test

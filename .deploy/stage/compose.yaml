@@ -1,0 +1,85 @@
+# Staging environment.
+#
+# Nothing deploys this automatically -- CI only builds and pushes the image. Run it by
+# hand on whichever machine hosts stage:
+#
+#   SECRET=... BASE_URL=https://... docker compose -f .deploy/stage/compose.yaml up -d
+#
+# Identical to .deploy/dev/compose.yaml apart from the project name, the published
+# port, the image tag, and DEBUG.
+
+name: club-manager-stage
+
+services:
+  backend:
+    # Overridable end to end so a locally built tag can be substituted.
+    image: ${IMAGE:-umineko9410/sdc-manager-backend:stage}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Traefik is not wired up yet, so the port is published straight to the host.
+      # 8082, so dev and stage can sit on the same machine.
+      - "8082:8080"
+    environment:
+      # Required. config.Load defaults Host to localhost, which inside a container
+      # binds to the loopback interface and is reachable by nobody.
+      - HOST=0.0.0.0
+      - PORT=8080
+      - DEBUG=false
+      # The image carries the migrations; golang-migrate reads them off disk.
+      - MIGRATION_SOURCE=file:///app/migrations
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/club_manager?sslmode=disable
+      # No default on purpose: with Debug false and the secret left at its default,
+      # main.go swaps in a random UUID at startup and every issued token dies with the
+      # restart. Fail to start instead.
+      - SECRET=${SECRET:?SECRET is required}
+      # Also no default: Google OAuth demands the authorized redirect URI match
+      # {BASE_URL}/api/auth/google/callback exactly.
+      - BASE_URL=${BASE_URL:?BASE_URL is required}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - ALLOW_ORIGINS=${ALLOW_ORIGINS:-*}
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # Google credentials are optional: without them the service still starts and the
+      # mailing list routes answer 503.
+      - GOOGLE_SERVICE_ACCOUNT_KEY=${GOOGLE_SERVICE_ACCOUNT_KEY:-}
+      - GOOGLE_IMPERSONATE_SUBJECT=${GOOGLE_IMPERSONATE_SUBJECT:-}
+      - GOOGLE_LOGIN_GROUP=${GOOGLE_LOGIN_GROUP:-}
+      - GOOGLE_GROUP_DOMAIN=${GOOGLE_GROUP_DOMAIN:-}
+      - GOOGLE_GROUP_CACHE_TTL=${GOOGLE_GROUP_CACHE_TTL:-}
+    # No healthcheck: the distroless image has no shell and no curl, so any test here
+    # would report unhealthy forever. Check it from the host instead:
+    #   curl -fsS http://localhost:8082/api/healthz
+    networks:
+      - internal
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    healthcheck:
+      # `docker compose up --wait` blocks on this, so the backend never races the
+      # database on a cold start.
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: club_manager
+    volumes:
+      # Unlike .deploy/local, this environment keeps its data across a redeploy.
+      # Mounted at /var/lib/postgresql, not .../data: postgres:18 moved the data
+      # directory into a version-named subdirectory and refuses to start when it
+      # finds a volume at the old path.
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  postgres-data:

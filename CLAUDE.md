@@ -159,6 +159,20 @@ Real DDL lives in `internal/database/migrations/`, applied by golang-migrate at 
 
 sqlc regenerates every table's model into every package, so `jwt.User` and `user.User` are identical types in two packages. Convert between them (`jwt.User(localUser)`) rather than duplicating a mapping — the conversion stops compiling if either drifts.
 
+## Deployment
+
+**Nothing deploys automatically.** CI builds and pushes an image; putting it on a machine is a manual `docker compose -f .deploy/<env>/compose.yaml up -d`. There is no n8n webhook, no traefik, and no server this repo knows about.
+
+The `Dockerfile` is **multi-stage and self-contained**, deliberately unlike clustron-backend's, which only `COPY`s a `bin/backend` its CI built beforehand. The sqlc output is gitignored, so the builder installs sqlc and runs `create_full_schema.sh` + `sqlc generate` itself — which is what lets `docker build .` work on any machine, and drops the image from ~1.1GB (`FROM golang`) to ~30MB (`distroless/static-debian12:nonroot`, uid 65532, ca-certificates included). **The sqlc version is pinned in two places** — the `go install` line and `SQLC_VERSION` in the workflows — and they have to move together.
+
+`internal/database/migrations/` is copied into the image because golang-migrate reads migrations off the filesystem, not an embedded FS; the compose files point `MIGRATION_SOURCE` at `file:///app/migrations`.
+
+A container has no `config.yaml` and no `.env`, so **every setting arrives as an environment variable** and the two "failed to load config" warnings at startup are expected. `HOST=0.0.0.0` is required — the default `localhost` binds to loopback inside the container, where nothing can reach it. `SECRET` and `BASE_URL` are written `${VAR:?...}` so compose refuses to start without them: an unset secret means `main.go` swaps in a random UUID and invalidates every token on each restart, and `BASE_URL` has to match the OAuth redirect URI exactly. Google credentials stay optional, as everywhere else.
+
+**The backend has no healthcheck**: distroless carries no shell, so any `test:` would report unhealthy forever. `postgres` has one (`up --wait` waits on it); check the backend from outside with `curl /api/healthz`. `.deploy/dev` and `.deploy/stage` differ only in project name, published port (8081/8082 — 8080 belongs to `make run`), image tag and `DEBUG`, and unlike `.deploy/local` both keep a named volume for Postgres — mounted at `/var/lib/postgresql`, **not** `/var/lib/postgresql/data`, which `postgres:18` refuses to start against. Each directory carries a committed `.env.example`; the `.env` beside it is gitignored and is what makes `docker compose logs`/`down` work without re-supplying the required variables on every command.
+
+`main.yml` (push to `main`, `:dev`) and `stage.yml` (tags `v*`, `:stage`) run Lint → Test → Build; `pull-request.yml` runs the first two. All three skip `docs/api/**` and `**.md`, which `api-docs*.yml` covers. **`make gen` runs before lint and test** — nothing compiles until it has. The Build job is gated on `vars.DOCKER_IMAGE_ENABLED == 'true'` so the pipeline stays green until `DOCKER_REGISTRY_USERNAME`/`DOCKER_REGISTRY_TOKEN` exist; the image lives in a personal namespace (`umineko9410/sdc-manager-backend`, not `nycusdc/`) because this repo does, and moving it means setting `vars.DOCKER_IMAGE`, not editing the workflows.
+
 ## Gotchas
 
 - **`main.go` tolerates an empty or absent `internal/database/migrations/`**: golang-migrate's file source reports either as `fs.ErrNotExist`, which is downgraded to a warning instead of `logger.Fatal`. `000001_init` now exists so that branch no longer fires in practice; leave it in place for fresh checkouts.

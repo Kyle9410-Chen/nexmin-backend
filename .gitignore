@@ -5,6 +5,7 @@ bin
 
 # setting files
 .env
+.deploy/*/.env
 config.yaml
 .config
 
