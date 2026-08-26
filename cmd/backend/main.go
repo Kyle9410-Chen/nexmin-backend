@@ -7,17 +7,17 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"nycu-sdc/club-manager/internal"
-	"nycu-sdc/club-manager/internal/auth"
-	"nycu-sdc/club-manager/internal/auth/oauthprovider"
-	"nycu-sdc/club-manager/internal/config"
-	"nycu-sdc/club-manager/internal/cors"
-	"nycu-sdc/club-manager/internal/googlegroup"
-	"nycu-sdc/club-manager/internal/jwt"
-	"nycu-sdc/club-manager/internal/membership"
-	"nycu-sdc/club-manager/internal/orgchart"
-	"nycu-sdc/club-manager/internal/trace"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal"
+	"nycu-sdc/nexmin/internal/auth"
+	"nycu-sdc/nexmin/internal/auth/oauthprovider"
+	"nycu-sdc/nexmin/internal/config"
+	"nycu-sdc/nexmin/internal/cors"
+	"nycu-sdc/nexmin/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/jwt"
+	"nycu-sdc/nexmin/internal/membership"
+	"nycu-sdc/nexmin/internal/orgchart"
+	"nycu-sdc/nexmin/internal/trace"
+	"nycu-sdc/nexmin/internal/user"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,7 +52,7 @@ const (
 func main() {
 	AppName = os.Getenv("APP_NAME")
 	if AppName == "" {
-		AppName = "club-manager"
+		AppName = "nexmin"
 	}
 
 	if BuildTime == "no-build-time" {

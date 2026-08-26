@@ -3,7 +3,7 @@ import "@typespec/http";
 using Http;
 
 @tag("Error")
-namespace ClubManager.Errors;
+namespace Nexmin.Errors;
 
 /**
  * RFC 9457 problem details, served as `application/problem+json`.

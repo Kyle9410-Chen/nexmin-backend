@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"nycu-sdc/club-manager/internal"
-	"nycu-sdc/club-manager/internal/jwt"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal"
+	"nycu-sdc/nexmin/internal/jwt"
+	"nycu-sdc/nexmin/internal/user"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap/zaptest"

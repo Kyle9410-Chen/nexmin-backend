@@ -1,4 +1,4 @@
-# SDC Club Manager API
+# Nexmin API
 
 TypeSpec definitions for this service's HTTP API, compiled to OpenAPI 3.1.
 
@@ -33,7 +33,7 @@ deployment assembles.
 
 ## Published
 
-<https://kyle9410-chen.github.io/sdc-manager-backend/> -- deployed by
+<https://kyle9410-chen.github.io/nexmin-backend/> -- deployed by
 `.github/workflows/api-docs.yml` on every push to `main` that touches `docs/api/**`.
 The URL follows the repository owner; nothing here hardcodes it.
 

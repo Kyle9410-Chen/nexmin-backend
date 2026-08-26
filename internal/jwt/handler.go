@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"nycu-sdc/club-manager/internal/apperr"
+	"nycu-sdc/nexmin/internal/apperr"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"

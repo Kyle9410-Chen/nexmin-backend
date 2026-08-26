@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"nycu-sdc/club-manager/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/googlegroup"
 )
 
 // A nested sub-config must merge field by field. configutil.Merge on its own compares

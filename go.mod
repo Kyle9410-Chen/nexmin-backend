@@ -1,4 +1,4 @@
-module nycu-sdc/club-manager
+module nycu-sdc/nexmin
 
 go 1.26.2
 

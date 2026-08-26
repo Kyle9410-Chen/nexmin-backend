@@ -6,14 +6,14 @@
 #   SECRET=... BASE_URL=https://... docker compose -f .deploy/dev/compose.yaml up -d
 #
 # It also runs locally against a freshly built image, which is how it is verified:
-#   IMAGE=sdc-manager-backend:test SECRET=... BASE_URL=http://localhost:8081 ...
+#   IMAGE=nexmin-backend:test SECRET=... BASE_URL=http://localhost:8081 ...
 
-name: club-manager-dev
+name: nexmin-dev
 
 services:
   backend:
     # Overridable end to end so a locally built tag can be substituted.
-    image: ${IMAGE:-umineko9410/sdc-manager-backend:dev}
+    image: ${IMAGE:-umineko9410/nexmin-backend:dev}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -30,7 +30,7 @@ services:
       - DEBUG=true
       # The image carries the migrations; golang-migrate reads them off disk.
       - MIGRATION_SOURCE=file:///app/migrations
-      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/club_manager?sslmode=disable
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/nexmin?sslmode=disable
       # No default on purpose: with Debug false and the secret left at its default,
       # main.go swaps in a random UUID at startup and every issued token dies with the
       # restart. Fail to start instead.
@@ -68,7 +68,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: club_manager
+      POSTGRES_DB: nexmin
     volumes:
       # Unlike .deploy/local, this environment keeps its data across a redeploy.
       # Mounted at /var/lib/postgresql, not .../data: postgres:18 moved the data

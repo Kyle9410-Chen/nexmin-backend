@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"nycu-sdc/club-manager/internal/jwt"
+	"nycu-sdc/nexmin/internal/jwt"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"nycu-sdc/club-manager/internal/apperr"
+	"nycu-sdc/nexmin/internal/apperr"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -20,7 +20,7 @@ import (
 )
 
 // issuerName is the `iss` claim on tokens minted by this service.
-const issuerName = "club-manager"
+const issuerName = "nexmin"
 
 // stateLifetime bounds how long an OAuth login may stay in flight. It is the window in
 // which a captured state parameter could be replayed, so keep it short.
@@ -31,8 +31,8 @@ const stateLifetime = 5 * time.Minute
 // browser history and Referer headers -- would be accepted as a session token. These
 // separate the two; parsing enforces the expected audience.
 const (
-	audienceAccess = "club-manager:access"
-	audienceState  = "club-manager:state"
+	audienceAccess = "nexmin:access"
+	audienceState  = "nexmin:state"
 )
 
 type Querier interface {

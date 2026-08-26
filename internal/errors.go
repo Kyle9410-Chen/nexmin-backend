@@ -3,7 +3,7 @@ package internal
 import (
 	"errors"
 	"net/http"
-	"nycu-sdc/club-manager/internal/apperr"
+	"nycu-sdc/nexmin/internal/apperr"
 
 	"github.com/NYCU-SDC/summer/pkg/problem"
 )

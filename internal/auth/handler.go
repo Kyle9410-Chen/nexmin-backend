@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"net/url"
 
-	"nycu-sdc/club-manager/internal/auth/oauthprovider"
-	"nycu-sdc/club-manager/internal/jwt"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal/auth/oauthprovider"
+	"nycu-sdc/nexmin/internal/jwt"
+	"nycu-sdc/nexmin/internal/user"
 
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.opentelemetry.io/otel"

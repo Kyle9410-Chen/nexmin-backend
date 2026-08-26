@@ -3,7 +3,7 @@ package auth
 import (
 	"testing"
 
-	"nycu-sdc/club-manager/internal/auth/oauthprovider"
+	"nycu-sdc/nexmin/internal/auth/oauthprovider"
 
 	"go.uber.org/zap/zaptest"
 )

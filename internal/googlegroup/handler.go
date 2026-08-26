@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"nycu-sdc/club-manager/internal/orgchart"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal/orgchart"
+	"nycu-sdc/nexmin/internal/user"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/NYCU-SDC/summer/pkg/problem"

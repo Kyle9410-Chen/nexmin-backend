@@ -8,12 +8,12 @@
 # Identical to .deploy/dev/compose.yaml apart from the project name, the published
 # port, the image tag, and DEBUG.
 
-name: club-manager-stage
+name: nexmin-stage
 
 services:
   backend:
     # Overridable end to end so a locally built tag can be substituted.
-    image: ${IMAGE:-umineko9410/sdc-manager-backend:stage}
+    image: ${IMAGE:-umineko9410/nexmin-backend:stage}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -30,7 +30,7 @@ services:
       - DEBUG=false
       # The image carries the migrations; golang-migrate reads them off disk.
       - MIGRATION_SOURCE=file:///app/migrations
-      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/club_manager?sslmode=disable
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/nexmin?sslmode=disable
       # No default on purpose: with Debug false and the secret left at its default,
       # main.go swaps in a random UUID at startup and every issued token dies with the
       # restart. Fail to start instead.
@@ -68,7 +68,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: club_manager
+      POSTGRES_DB: nexmin
     volumes:
       # Unlike .deploy/local, this environment keeps its data across a redeploy.
       # Mounted at /var/lib/postgresql, not .../data: postgres:18 moved the data

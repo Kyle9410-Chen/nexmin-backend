@@ -51,7 +51,7 @@ func main() {
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		// Must match internal/jwt.audienceAccess; the server rejects tokens without it,
 		// which is what stops an OAuth state token being replayed as a session.
-		"aud":   "club-manager:access",
+		"aud":   "nexmin:access",
 		"sub":   *sub,
 		"email": *email,
 		"role":  *role,

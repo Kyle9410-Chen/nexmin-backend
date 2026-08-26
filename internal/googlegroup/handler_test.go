@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"nycu-sdc/club-manager/internal"
-	. "nycu-sdc/club-manager/internal/googlegroup"
-	"nycu-sdc/club-manager/internal/orgchart"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal"
+	. "nycu-sdc/nexmin/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/orgchart"
+	"nycu-sdc/nexmin/internal/user"
 
 	"github.com/go-playground/validator/v10"
 	"go.uber.org/zap/zaptest"

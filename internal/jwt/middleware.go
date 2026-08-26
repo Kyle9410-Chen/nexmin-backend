@@ -3,7 +3,7 @@ package jwt
 import (
 	"context"
 	"net/http"
-	"nycu-sdc/club-manager/internal"
+	"nycu-sdc/nexmin/internal"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"

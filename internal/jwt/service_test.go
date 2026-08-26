@@ -3,7 +3,7 @@ package jwt
 import (
 	"errors"
 
-	"nycu-sdc/club-manager/internal/apperr"
+	"nycu-sdc/nexmin/internal/apperr"
 
 	"testing"
 	"time"

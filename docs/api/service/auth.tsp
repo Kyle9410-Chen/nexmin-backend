@@ -4,7 +4,7 @@ import "./error.tsp";
 using Http;
 
 @tag("Auth")
-namespace ClubManager.Auth;
+namespace Nexmin.Auth;
 
 /**
  * A fresh token pair.

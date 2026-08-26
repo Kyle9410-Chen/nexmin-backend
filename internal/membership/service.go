@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	"nycu-sdc/club-manager/internal/googlegroup"
-	"nycu-sdc/club-manager/internal/orgchart"
+	"nycu-sdc/nexmin/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/orgchart"
 
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.opentelemetry.io/otel"

@@ -95,5 +95,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ${{ vars.DOCKER_IMAGE || 'umineko9410/sdc-manager-backend' }}:dev
-            ${{ vars.DOCKER_IMAGE || 'umineko9410/sdc-manager-backend' }}:${{ github.sha }}
+            ${{ vars.DOCKER_IMAGE || 'umineko9410/nexmin-backend' }}:dev
+            ${{ vars.DOCKER_IMAGE || 'umineko9410/nexmin-backend' }}:${{ github.sha }}

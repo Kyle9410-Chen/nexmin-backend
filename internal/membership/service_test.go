@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"nycu-sdc/club-manager/internal/googlegroup"
-	"nycu-sdc/club-manager/internal/orgchart"
+	"nycu-sdc/nexmin/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/orgchart"
 
 	"go.uber.org/zap/zaptest"
 )

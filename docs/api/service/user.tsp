@@ -5,7 +5,7 @@ import "./group.tsp";
 using Http;
 
 @tag("User")
-namespace ClubManager.Users;
+namespace Nexmin.Users;
 
 /** This service's own roles, as carried in the access token's `role` claim. */
 union LocalRole {

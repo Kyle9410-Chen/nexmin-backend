@@ -4,7 +4,7 @@ import "./error.tsp";
 using Http;
 
 @tag("Group")
-namespace ClubManager.Groups;
+namespace Nexmin.Groups;
 
 /**
  * A member's role in a Google group. Comparison is case-insensitive on input and an

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"nycu-sdc/club-manager/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/googlegroup"
 
 	configutil "github.com/NYCU-SDC/summer/pkg/config"
 	"github.com/joho/godotenv"

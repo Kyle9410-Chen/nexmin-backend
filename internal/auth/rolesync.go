@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"nycu-sdc/club-manager/internal/googlegroup"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/user"
 
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.opentelemetry.io/otel"

@@ -9,7 +9,7 @@ base_url: "http://localhost:8080"
 # minted token. Use a real secret here and something unguessable in deployments.
 secret: "local-dev-secret"
 
-database_url: "postgres://postgres:password@localhost:5432/club_manager?sslmode=disable"
+database_url: "postgres://postgres:password@localhost:5432/nexmin?sslmode=disable"
 migration_source: "file://internal/database/migrations"
 allow_origins:
   - "http://localhost:3000"

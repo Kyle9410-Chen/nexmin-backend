@@ -1,1 +1,1 @@
-# sdc-manager
+# Nexmin

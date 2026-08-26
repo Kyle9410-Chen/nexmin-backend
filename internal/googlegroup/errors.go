@@ -1,6 +1,6 @@
 package googlegroup
 
-import "nycu-sdc/club-manager/internal/apperr"
+import "nycu-sdc/nexmin/internal/apperr"
 
 // The sentinels themselves live in internal/apperr, a leaf package, so that
 // internal/errors.go can map them to RFC 9457 problems without importing this package.

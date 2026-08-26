@@ -3,7 +3,7 @@ import "@typespec/http";
 using Http;
 
 @tag("Health")
-namespace ClubManager.Health;
+namespace Nexmin.Health;
 
 model HealthResponse {
   @example("ok")

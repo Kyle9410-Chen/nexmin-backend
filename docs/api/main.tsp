@@ -19,7 +19,7 @@ using Versioning;
  * role is derived from being an OWNER or MANAGER of it. See `docs/organization.md`
  * for how the club's structure maps onto those lists.
  */
-@service(#{ title: "SDC Club Manager API" })
+@service(#{ title: "Nexmin API" })
 @server("http://localhost:8080", "Local development")
 @versioned(Versions)
 @tagMetadata(
@@ -48,7 +48,7 @@ using Versioning;
 )
 @tagMetadata("Error", #{ description: "Shared RFC 9457 problem shapes." })
 @route("/api")
-namespace ClubManager;
+namespace Nexmin;
 
 enum Versions {
   v1: "1.0.0",

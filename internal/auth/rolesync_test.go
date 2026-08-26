@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"nycu-sdc/club-manager/internal/googlegroup"
-	"nycu-sdc/club-manager/internal/user"
+	"nycu-sdc/nexmin/internal/googlegroup"
+	"nycu-sdc/nexmin/internal/user"
 
 	"go.uber.org/zap/zaptest"
 )

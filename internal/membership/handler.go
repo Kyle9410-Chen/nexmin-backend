@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"nycu-sdc/club-manager/internal/jwt"
-	"nycu-sdc/club-manager/internal/orgchart"
+	"nycu-sdc/nexmin/internal/jwt"
+	"nycu-sdc/nexmin/internal/orgchart"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
