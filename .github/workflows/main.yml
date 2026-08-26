@@ -64,11 +64,13 @@ jobs:
 
   Build:
     needs: Test
-    # Guarded by a repository variable so the pipeline stays green before the Docker
-    # Hub credentials exist. Set DOCKER_IMAGE_ENABLED=true once
-    # DOCKER_REGISTRY_USERNAME / DOCKER_REGISTRY_TOKEN are in place.
+    # Guarded so the pipeline stays green before the Docker Hub credentials exist.
+    # DOCKER_IMAGE_ENABLED must be a *repository* variable, not one on the environment
+    # below: a job-level `if` is evaluated before the environment is resolved, so an
+    # environment-scoped variable reads as empty here and the job is always skipped.
     if: ${{ vars.DOCKER_IMAGE_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    # Carries DOCKER_REGISTRY_USERNAME / DOCKER_REGISTRY_TOKEN.
     environment: docker-hub
     steps:
       - name: Checkout source
