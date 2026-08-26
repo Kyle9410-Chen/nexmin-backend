@@ -90,6 +90,10 @@ func Load() (Config, *LogBuffer) {
 		FrontendURL:     "http://localhost:3000",
 		GoogleGroup: googlegroup.Config{
 			CacheTTL: "5m",
+			// The club runs one Workspace domain, so default to it and let the API
+			// speak bare group names out of the box. Override it anywhere the groups
+			// live somewhere else; set it empty to keep full addresses.
+			Domain: "sdc.nycu.club",
 		},
 	}
 
@@ -200,6 +204,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 			ServiceAccountKey:  serviceAccountKey,
 			ImpersonateSubject: os.Getenv("GOOGLE_IMPERSONATE_SUBJECT"),
 			CacheTTL:           os.Getenv("GOOGLE_GROUP_CACHE_TTL"),
+			Domain:             os.Getenv("GOOGLE_GROUP_DOMAIN"),
 			LoginGroup:         os.Getenv("GOOGLE_LOGIN_GROUP"),
 		},
 	}
@@ -220,6 +225,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.GoogleGroup.ServiceAccountKey, "google_service_account_key", "", "base64-encoded google service account JSON key")
 	flag.StringVar(&flagConfig.GoogleGroup.ImpersonateSubject, "google_impersonate_subject", "", "workspace admin to impersonate via domain-wide delegation")
 	flag.StringVar(&flagConfig.GoogleGroup.CacheTTL, "google_group_cache_ttl", "", "mailing list member cache TTL, e.g. 5m")
+	flag.StringVar(&flagConfig.GoogleGroup.Domain, "google_group_domain", "", "workspace domain the club's groups live in, e.g. sdc.nycu.club")
 	flag.StringVar(&flagConfig.GoogleGroup.LoginGroup, "google_login_group", "", "mailing list whose members may sign in")
 	flag.StringVar(&flagConfig.FrontendURL, "frontend_url", "", "frontend URL to redirect to after login")
 	flag.StringVar(&flagConfig.GoogleOauthClientID, "google_oauth_client_id", "", "google OAuth client ID")

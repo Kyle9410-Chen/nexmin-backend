@@ -14,6 +14,8 @@ import (
 	"nycu-sdc/club-manager/internal/cors"
 	"nycu-sdc/club-manager/internal/googlegroup"
 	"nycu-sdc/club-manager/internal/jwt"
+	"nycu-sdc/club-manager/internal/membership"
+	"nycu-sdc/club-manager/internal/orgchart"
 	"nycu-sdc/club-manager/internal/trace"
 	"nycu-sdc/club-manager/internal/user"
 	"os"
@@ -141,17 +143,30 @@ func main() {
 		logger.Warn("No login group configured, login will be refused for everyone")
 	}
 
+	// roleResolver is the single implementation of "what may this member do here",
+	// shared by the sign-in gate and the user read paths so they cannot disagree.
+	roleResolver := auth.NewRoleResolver(logger, googleGroupService, cfg.GoogleGroup.LoginGroup)
+
+	// Every error Load reports is a typo in a committed file, so fail here rather than
+	// serving blank labels on the first request that needs them.
+	chart, err := orgchart.Load()
+	if err != nil {
+		logger.Fatal("Failed to load the organization chart", zap.Error(err))
+	}
+	membershipService := membership.NewService(logger, googleGroupService, chart, cfg.GoogleGroup.LoginGroup)
+
 	// Handler
 	validate := validator.New()
-	googleGroupHandler := googlegroup.NewHandler(logger, problemWriter, googleGroupService)
+	googleGroupHandler := googlegroup.NewHandler(logger, validate, problemWriter, googleGroupService, userService, chart)
+	userHandler := user.NewHandler(logger, validate, problemWriter, userService, roleResolver, membershipService, membershipService)
+	membershipHandler := membership.NewHandler(logger, problemWriter, membershipService, chart)
 	jwtHandler := jwt.NewHandler(logger, validate, problemWriter, jwtService)
 	authHandler := auth.NewHandler(
 		logger,
 		googleProvider,
-		googleGroupService,
+		roleResolver,
 		userService,
 		jwtService,
-		cfg.GoogleGroup.LoginGroup,
 		cfg.FrontendURL,
 		int64(accessTokenTTL.Seconds()),
 	)
@@ -170,6 +185,10 @@ func main() {
 	authMiddleware = authMiddleware.Append(traceMiddleware.TraceMiddleWare)
 	authMiddleware = authMiddleware.Append(jwtMiddleware.HandlerFunc)
 
+	// Admin Middleware (JWT verification + role check). The role is derived from the
+	// caller's role in the login mailing list at sign-in; see internal/auth.
+	adminMiddleware := authMiddleware.Append(jwtMiddleware.RequireRole(user.RoleAdmin))
+
 	// HTTP Server
 	mux := http.NewServeMux()
 
@@ -182,9 +201,22 @@ func main() {
 	mux.HandleFunc("POST /api/auth/refresh", basicMiddleware.HandlerFunc(jwtHandler.RefreshHandler))
 	mux.HandleFunc("POST /api/auth/logout", authMiddleware.HandlerFunc(jwtHandler.LogoutHandler))
 
+	// Users. /api/users/me is a literal segment, which Go's ServeMux prefers over the
+	// {user_id} wildcard, so the two routes do not conflict.
+	mux.HandleFunc("GET /api/users/me", authMiddleware.HandlerFunc(userHandler.MeHandler))
+	mux.HandleFunc("GET /api/users/me/groups", authMiddleware.HandlerFunc(membershipHandler.MyGroupsHandler))
+	mux.HandleFunc("PATCH /api/users/me", authMiddleware.HandlerFunc(userHandler.UpdateMeHandler))
+	mux.HandleFunc("GET /api/users", adminMiddleware.HandlerFunc(userHandler.ListHandler))
+	mux.HandleFunc("POST /api/users", adminMiddleware.HandlerFunc(userHandler.AddHandler))
+	mux.HandleFunc("DELETE /api/users/{email}", adminMiddleware.HandlerFunc(userHandler.RemoveHandler))
+	mux.HandleFunc("GET /api/users/{user_id}", adminMiddleware.HandlerFunc(userHandler.GetHandler))
+
 	// Google groups
 	mux.HandleFunc("GET /api/groups", authMiddleware.HandlerFunc(googleGroupHandler.ListGroupsHandler))
 	mux.HandleFunc("GET /api/groups/{group_key}/members", authMiddleware.HandlerFunc(googleGroupHandler.ListMembersHandler))
+	mux.HandleFunc("POST /api/groups/{group_key}/members", adminMiddleware.HandlerFunc(googleGroupHandler.AddMemberHandler))
+	mux.HandleFunc("PATCH /api/groups/{group_key}/members/{member_key}", adminMiddleware.HandlerFunc(googleGroupHandler.UpdateMemberHandler))
+	mux.HandleFunc("DELETE /api/groups/{group_key}/members/{member_key}", adminMiddleware.HandlerFunc(googleGroupHandler.RemoveMemberHandler))
 
 	// handle interrupt signal
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

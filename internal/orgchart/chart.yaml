@@ -1,0 +1,123 @@
+# Display metadata for the club's mailing lists.
+#
+# This file does NOT define the organizational hierarchy -- that lives in Google, as
+# nested group membership, and is what actually decides who receives mail. Everything
+# here is presentation: display names, which section a list belongs to, and what order
+# things appear in. Changing this file never changes who receives anything.
+#
+# Names drop the "NYCU SDC " prefix every group on Google carries; repeating it on
+# every row carries no information.
+#
+# See docs/organization.md.
+
+sections:
+  - key: all
+    name: All Members
+    groups: [general]
+
+  - key: governance
+    name: Governance
+    groups: [presidents, committee, consultants]
+
+  - key: departments
+    name: Departments
+    groups: [administration, branding, design, education, engineering, finance]
+
+  - key: infra
+    name: Infra Team
+    groups: [infrastructure]
+
+  - key: project
+    name: Project Team
+    groups: [core-system, clustron, sciedu-llm, itsc-hr, sre]
+
+  - key: hpc
+    name: HPC Team
+    groups: [hpc, hpc-apac2026, hpc-hipac-2026, polaris]
+
+  - key: training
+    name: Training
+    groups: [hpc-training, project-training]
+
+  - key: program
+    name: Program
+    groups:
+      - full-stack-intro-training-program-fall-2025
+      - full-stack-advanced-training-program-fall-2025
+      - full-stack-intro-training-program-spring-2026
+      - full-stack-advanced-training-program-spring-2026
+      - gpu-programming-training-program-spring-2026
+      - react-credit-program-spring-2026
+
+  - key: events
+    name: Events
+    groups: [welcome-home, wch-finance, world-riscv-days, ed312]
+
+  # Plumbing nobody needs to see on their own profile. GET /api/groups still reports
+  # it -- that list is the whole account, and hiding rows there would read as a group
+  # having gone missing.
+  - key: system
+    name: System
+    hidden: true
+    groups: [info, classroom_teachers]
+
+groups:
+  general: {name: General}
+
+  presidents: {name: Presidents}
+  committee: {name: Committee}
+  consultants: {name: Consultants}
+
+  administration: {name: Administration}
+  branding: {name: Branding}
+  design: {name: Design Team}
+  education: {name: Education}
+  engineering: {name: Engineering}
+  finance: {name: Finance}
+
+  infrastructure: {name: Infrastructure Committee}
+
+  core-system: {name: Core System}
+  clustron: {name: Clustron}
+  sciedu-llm: {name: Edu Institute Collab}
+  itsc-hr: {name: IT Center Collab}
+  sre: {name: SRE Team}
+
+  hpc: {name: HPC Team}
+  hpc-apac2026: {name: APAC 2026}
+  hpc-hipac-2026: {name: HiPAC 2026}
+  polaris: {name: Polaris}
+
+  hpc-training: {name: HPC Training}
+  project-training: {name: Project Training}
+
+  full-stack-intro-training-program-fall-2025: {name: Full Stack Intro. Fall 2025}
+  full-stack-advanced-training-program-fall-2025: {name: Full Stack Advanced Fall 2025}
+  full-stack-intro-training-program-spring-2026: {name: Full Stack Intro. Spring 2026}
+  full-stack-advanced-training-program-spring-2026: {name: Full Stack Advanced Spring 2026}
+  gpu-programming-training-program-spring-2026: {name: GPU Programming Spring 2026}
+  react-credit-program-spring-2026: {name: React Credit Spring 2026}
+
+  welcome-home: {name: Welcome Home}
+  wch-finance: {name: Welcome Home Finance}
+  world-riscv-days: {name: World RISC-V Days}
+  ed312: {name: ED312 Remote Lab}
+
+  info: {name: Mail Backup}
+  classroom_teachers: {name: Classroom Teachers}
+
+# Who is responsible for which mailing list.
+#
+# Kept in Chinese on purpose: these are the club's own titles, and they are what the
+# officers call themselves.
+#
+# This cannot be derived from Google: all six office holders are MANAGER in every
+# department group, so the membership role only says "is an officer", never which
+# portfolio they hold. See docs/organization.md section 4.
+roles:
+  - {key: president, name: 社長, group: presidents, owns: [committee]}
+  - {key: executive_vp, name: 執行副社長, group: presidents, owns: [administration, finance, branding, design]}
+  - {key: infra_vp, name: 技術副社長, group: presidents, owns: [infrastructure]}
+  - {key: hpc_vp, name: 超算副社長, group: presidents, owns: [hpc, hpc-apac2026, hpc-hipac-2026, polaris]}
+  - {key: education_vp, name: 教務副社長, group: presidents, owns: [education]}
+  - {key: engineering_vp, name: 開發副社長, group: presidents, owns: [engineering]}

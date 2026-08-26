@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 )
@@ -97,5 +98,113 @@ func TestTranslateAPIErrorMapsTokenFailures(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unauthorized_client") {
 		t.Fatalf("expected the oauth2 error code in the message, got %q", err.Error())
+	}
+}
+
+func TestTranslateMemberAPIError(t *testing.T) {
+	tests := []struct {
+		name string
+		code int
+		want error
+	}{
+		// 404 on a member call can mean either the group or the member is missing, so it
+		// maps to the member sentinel and the message names both.
+		{"not found", http.StatusNotFound, ErrMemberNotFound},
+		{"conflict", http.StatusConflict, ErrMemberAlreadyExists},
+		{"bad request", http.StatusBadRequest, ErrInvalidMemberRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := translateMemberAPIError(&googleapi.Error{Code: tt.code, Message: "invalid role"}, "group@example.com", "user@example.com")
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("got %v, want it to wrap %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestTranslateMemberAPIErrorNamesBothKeysOn404(t *testing.T) {
+	err := translateMemberAPIError(&googleapi.Error{Code: http.StatusNotFound}, "group@example.com", "user@example.com")
+	for _, want := range []string{"group@example.com", "user@example.com"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in the error, got %q", want, err.Error())
+		}
+	}
+}
+
+// Everything a read can also produce must keep its existing meaning.
+func TestTranslateMemberAPIErrorDelegatesSharedCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"forbidden", &googleapi.Error{Code: http.StatusForbidden}, ErrInsufficientPermission},
+		{"rate limited", &googleapi.Error{Code: http.StatusTooManyRequests}, ErrQuotaExceeded},
+		{"credentials rejected", &oauth2.RetrieveError{ErrorCode: "unauthorized_client"}, ErrCredentialsRejected},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := translateMemberAPIError(tt.err, "group@example.com", "user@example.com")
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("got %v, want it to wrap %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeRole(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"MEMBER", RoleMember, false},
+		{"manager", RoleManager, false},
+		{" Owner ", RoleOwner, false},
+		// Empty means MEMBER, which is Google's own default for members.insert.
+		{"", RoleMember, false},
+		{"ADMIN", "", true},
+		{"OWNERS", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := NormalizeRole(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("NormalizeRole(%q) = %q, want an error", tt.in, got)
+				}
+				if !errors.Is(err, handlerutil.ErrValidation) {
+					t.Fatalf("got error %v, want a validation error so it maps to 400", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("NormalizeRole(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteMethodsRequireConfiguration(t *testing.T) {
+	s, err := NewService(testLogger(t), Config{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := s.AddMember(t.Context(), "group@example.com", "user@example.com", RoleMember); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("AddMember: got %v, want ErrNotConfigured", err)
+	}
+	if _, err := s.UpdateMemberRole(t.Context(), "group@example.com", "user@example.com", RoleManager); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("UpdateMemberRole: got %v, want ErrNotConfigured", err)
+	}
+	if err := s.RemoveMember(t.Context(), "group@example.com", "user@example.com"); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("RemoveMember: got %v, want ErrNotConfigured", err)
 	}
 }

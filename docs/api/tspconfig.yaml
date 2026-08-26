@@ -1,0 +1,11 @@
+emit:
+  - "@typespec/openapi3"
+options:
+  "@typespec/openapi3":
+    emitter-output-dir: "{output-dir}/schema"
+    openapi-versions:
+      # 3.1 rather than 3.0: this API uses null to carry meaning in several places
+      # (profile, groups, via, ownerRole), and only 3.1 can say `type: [x, "null"]`
+      # without falling back to 3.0's non-standard `nullable` keyword.
+      - 3.1.0
+    output-file: "openapi.yaml"

@@ -9,7 +9,7 @@ func TestCacheReturnsStoredMembers(t *testing.T) {
 	c := newCache[Member](time.Minute)
 	want := []Member{{Email: "a@example.com", Role: "MEMBER"}}
 
-	c.set("group@example.com", want)
+	c.set("group@example.com", c.begin(), want)
 
 	got, ok := c.get("group@example.com")
 	if !ok {
@@ -22,7 +22,7 @@ func TestCacheReturnsStoredMembers(t *testing.T) {
 
 func TestCacheMissForUnknownKey(t *testing.T) {
 	c := newCache[Member](time.Minute)
-	c.set("group@example.com", []Member{{Email: "a@example.com"}})
+	c.set("group@example.com", c.begin(), []Member{{Email: "a@example.com"}})
 
 	if _, ok := c.get("other@example.com"); ok {
 		t.Fatal("expected cache miss for a different group key")
@@ -31,7 +31,7 @@ func TestCacheMissForUnknownKey(t *testing.T) {
 
 func TestCacheExpiresAndEvicts(t *testing.T) {
 	c := newCache[Member](-time.Second) // already expired on write
-	c.set("group@example.com", []Member{{Email: "a@example.com"}})
+	c.set("group@example.com", c.begin(), []Member{{Email: "a@example.com"}})
 
 	if _, ok := c.get("group@example.com"); ok {
 		t.Fatal("expected expired entry to miss")
@@ -53,7 +53,7 @@ func TestCacheConcurrentAccess(t *testing.T) {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			for j := 0; j < 200; j++ {
-				c.set("group@example.com", []Member{{Email: "a@example.com"}})
+				c.set("group@example.com", c.begin(), []Member{{Email: "a@example.com"}})
 				c.get("group@example.com")
 			}
 		}()
@@ -67,7 +67,7 @@ func TestCacheConcurrentAccess(t *testing.T) {
 // group list, which uses a fixed key rather than a group address.
 func TestCacheWorksForGroups(t *testing.T) {
 	c := newCache[Group](time.Minute)
-	c.set(allGroupsCacheKey, []Group{{Email: "team@example.com", DirectMembersCount: 3}})
+	c.set(allGroupsCacheKey, c.begin(), []Group{{Email: "team@example.com", DirectMembersCount: 3}})
 
 	got, ok := c.get(allGroupsCacheKey)
 	if !ok {
@@ -80,9 +80,26 @@ func TestCacheWorksForGroups(t *testing.T) {
 
 func TestCacheExpiresGroups(t *testing.T) {
 	c := newCache[Group](-time.Second)
-	c.set(allGroupsCacheKey, []Group{{Email: "team@example.com"}})
+	c.set(allGroupsCacheKey, c.begin(), []Group{{Email: "team@example.com"}})
 
 	if _, ok := c.get(allGroupsCacheKey); ok {
 		t.Fatal("expected expired group entry to miss")
+	}
+}
+
+func TestCacheClearDropsEveryKey(t *testing.T) {
+	c := newCache[Member](time.Minute)
+	c.set("team@example.com", c.begin(), []Member{{Email: "a@example.com"}})
+	c.set("00000000", c.begin(), []Member{{Email: "b@example.com"}})
+
+	c.clear()
+
+	// Both keys must go: a write can name a group by either address, so clearing only
+	// the one it saw would leave the other serving a stale roster.
+	if _, ok := c.get("team@example.com"); ok {
+		t.Fatal("expected the email-keyed entry to be gone")
+	}
+	if _, ok := c.get("00000000"); ok {
+		t.Fatal("expected the id-keyed entry to be gone")
 	}
 }

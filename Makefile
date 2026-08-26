@@ -7,7 +7,7 @@ NC = \033[0m
 
 COMPOSE = docker compose -f ./.deploy/local/compose.yaml
 
-.PHONY: all run build test lint gen config up down clean token
+.PHONY: all run build test lint gen config up down clean token api
 
 all: build
 
@@ -84,6 +84,12 @@ gen:
 ## Prints only the token, so it can be captured directly: TOKEN=$$(make -s token)
 token: config
 	@go run ./scripts/token $(ARGS)
+
+## api: format-check and compile the TypeSpec API spec in docs/api.
+## Deliberately not a prerequisite of build/test/lint: the Go workflow must keep
+## working on a machine with no node installed.
+api:
+	@$(MAKE) --no-print-directory -C docs/api
 
 clean:
 	@echo -e ":: $(GREEN)Cleaning up...$(NC)"

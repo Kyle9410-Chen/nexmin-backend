@@ -38,6 +38,16 @@ google_group:
   # How long a fetched member list is reused. Env: GOOGLE_GROUP_CACHE_TTL
   cache_ttl: "5m"
 
+  # Workspace domain the club's own groups live in. With this set, the API speaks bare
+  # group names in both directions -- GET /api/groups returns "general" and
+  # GET /api/groups/general/members works -- while full addresses and immutable group
+  # IDs keep working. Set it empty to go back to full addresses everywhere.
+  # Member addresses are never touched; those are @gmail.com, @nycu.edu.tw and so on.
+  # Env: GOOGLE_GROUP_DOMAIN
+  domain: "sdc.nycu.club"
+
   # Only active, direct members of this mailing list may sign in. Leaving it empty
-  # refuses every login rather than allowing everyone. Env: GOOGLE_LOGIN_GROUP
+  # refuses every login rather than allowing everyone. A bare name is resolved against
+  # `domain` above, so "general" and "general@sdc.nycu.club" are equivalent here.
+  # Env: GOOGLE_LOGIN_GROUP
   login_group: ""

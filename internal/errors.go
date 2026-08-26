@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"nycu-sdc/club-manager/internal/apperr"
-	"nycu-sdc/club-manager/internal/googlegroup"
 
 	"github.com/NYCU-SDC/summer/pkg/problem"
 )
@@ -18,14 +17,20 @@ func NewProblemWriter() *problem.HttpWriter {
 func ErrorHandler(err error) problem.Problem {
 	switch {
 	// Google mailing list errors
-	case errors.Is(err, googlegroup.ErrGroupNotFound):
+	case errors.Is(err, apperr.ErrGroupNotFound):
 		return problem.NewNotFoundProblem(err.Error())
-	case errors.Is(err, googlegroup.ErrInsufficientPermission):
+	case errors.Is(err, apperr.ErrInsufficientPermission):
 		return problem.NewForbiddenProblem(err.Error())
-	case errors.Is(err, googlegroup.ErrQuotaExceeded):
+	case errors.Is(err, apperr.ErrQuotaExceeded):
 		return NewTooManyRequestsProblem(err.Error())
-	case errors.Is(err, googlegroup.ErrNotConfigured):
+	case errors.Is(err, apperr.ErrNotConfigured):
 		return NewServiceUnavailableProblem("Google integration is not configured on this server")
+	case errors.Is(err, apperr.ErrMemberNotFound):
+		return problem.NewNotFoundProblem(err.Error())
+	case errors.Is(err, apperr.ErrMemberAlreadyExists):
+		return NewConflictProblem(err.Error())
+	case errors.Is(err, apperr.ErrInvalidMemberRequest):
+		return problem.NewValidateProblem(err.Error())
 	// Auth errors
 	case errors.Is(err, apperr.ErrInvalidState):
 		return problem.NewValidateProblem("Invalid or expired login state; start the login again")
@@ -40,7 +45,7 @@ func ErrorHandler(err error) problem.Problem {
 	case errors.Is(err, apperr.ErrInvalidRefreshToken):
 		return problem.NewUnauthorizedProblem("Refresh token is invalid, expired, or revoked")
 	// Google mailing list errors
-	case errors.Is(err, googlegroup.ErrCredentialsRejected):
+	case errors.Is(err, apperr.ErrCredentialsRejected):
 		return NewServiceUnavailableProblem("Google rejected this server's credentials; check the service account key and domain-wide delegation")
 	default:
 		return problem.Problem{}
@@ -52,6 +57,15 @@ func NewTooManyRequestsProblem(detail string) problem.Problem {
 		Title:  "Too Many Requests",
 		Status: http.StatusTooManyRequests,
 		Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429",
+		Detail: detail,
+	}
+}
+
+func NewConflictProblem(detail string) problem.Problem {
+	return problem.Problem{
+		Title:  "Conflict",
+		Status: http.StatusConflict,
+		Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409",
 		Detail: detail,
 	}
 }

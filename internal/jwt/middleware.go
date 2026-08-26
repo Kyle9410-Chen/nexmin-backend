@@ -62,6 +62,45 @@ func (m Middleware) HandlerFunc(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// RequireRole rejects callers whose access token does not carry one of the given roles.
+//
+// It must be chained AFTER HandlerFunc, which is what puts the user into the context; on
+// its own it fails closed, since a missing user is treated as no role at all.
+//
+// The role comes from the token claim, and the claim is derived from the caller's role
+// in the login mailing list at sign-in (see internal/auth). Refreshing re-reads the user
+// row but never re-reads the mailing list, so a promotion or demotion made in Google
+// Groups reaches this check only when that person signs in again.
+func (m Middleware) RequireRole(roles ...string) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			traceCtx, span := m.tracer.Start(r.Context(), "RequireRoleMiddleware")
+			defer span.End()
+			logger := logutil.WithContext(traceCtx, m.logger)
+
+			user, err := GetUserFromContext(traceCtx)
+			if err != nil {
+				logger.Error("RequireRole ran without a user in the context; it must be chained after the JWT middleware")
+				m.problemWriter.WriteErrorWithRequest(traceCtx, r, w, handlerutil.ErrForbidden, logger)
+				return
+			}
+
+			for _, role := range roles {
+				if user.Role == role {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			logger.Warn("Rejected request for insufficient role",
+				zap.String("user_id", user.ID.String()),
+				zap.String("role", user.Role),
+				zap.Strings("required", roles))
+			m.problemWriter.WriteErrorWithRequest(traceCtx, r, w, handlerutil.ErrForbidden, logger)
+		}
+	}
+}
+
 func GetUserFromContext(ctx context.Context) (User, error) {
 	user, ok := ctx.Value(internal.UserContextKey).(User)
 	if !ok {

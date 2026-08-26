@@ -14,3 +14,7 @@ internal/database/full_schema.sql
 db.go
 models.go
 queries.sql.go
+
+# TypeSpec API spec (docs/api)
+node_modules/
+tsp-output/

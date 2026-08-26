@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"nycu-sdc/club-manager/internal/auth/oauthprovider"
-	"nycu-sdc/club-manager/internal/googlegroup"
 	"nycu-sdc/club-manager/internal/jwt"
 	"nycu-sdc/club-manager/internal/user"
 
@@ -19,18 +17,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// activeMemberStatus is the Directory API status for a usable membership. Suspended or
-// unknown members must not be able to sign in.
-const activeMemberStatus = "ACTIVE"
-
-// MemberChecker resolves the members of the group that gates login.
-type MemberChecker interface {
-	ListMembers(ctx context.Context, groupKey string) ([]googlegroup.Member, error)
-}
-
 // UserStore looks up or creates the local user record for a verified identity.
 type UserStore interface {
-	FindOrCreateByEmail(ctx context.Context, email, name string) (user.User, error)
+	FindOrCreateByEmail(ctx context.Context, email, name, role string) (user.User, error)
 }
 
 // TokenIssuer mints the session tokens handed back to the frontend.
@@ -46,10 +35,9 @@ type Handler struct {
 	tracer trace.Tracer
 
 	provider    *oauthprovider.GoogleConfig
-	members     MemberChecker
+	roles       *RoleResolver
 	users       UserStore
 	tokens      TokenIssuer
-	loginGroup  string
 	frontendURL string
 	expiresIn   int64
 }
@@ -57,10 +45,9 @@ type Handler struct {
 func NewHandler(
 	logger *zap.Logger,
 	provider *oauthprovider.GoogleConfig,
-	members MemberChecker,
+	roles *RoleResolver,
 	users UserStore,
 	tokens TokenIssuer,
-	loginGroup string,
 	frontendURL string,
 	expiresIn int64,
 ) *Handler {
@@ -68,10 +55,9 @@ func NewHandler(
 		logger:      logger,
 		tracer:      otel.Tracer("auth/handler"),
 		provider:    provider,
-		members:     members,
+		roles:       roles,
 		users:       users,
 		tokens:      tokens,
-		loginGroup:  loginGroup,
 		frontendURL: frontendURL,
 		expiresIn:   expiresIn,
 	}
@@ -151,7 +137,7 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, err := h.isMember(traceCtx, info.Email)
+	role, allowed, err := h.roles.RoleFor(traceCtx, info.Email)
 	if err != nil {
 		logger.Error("Failed to check login group membership", zap.Error(err))
 		span.RecordError(err)
@@ -159,12 +145,12 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		logger.Warn("Rejected sign-in for non-member", zap.String("email", info.Email), zap.String("login_group", h.loginGroup))
+		logger.Warn("Rejected sign-in for non-member", zap.String("email", info.Email), zap.String("login_group", h.roles.LoginGroup()))
 		h.redirectError(w, r, "not_a_member")
 		return
 	}
 
-	localUser, err := h.users.FindOrCreateByEmail(traceCtx, info.Email, info.Name)
+	localUser, err := h.users.FindOrCreateByEmail(traceCtx, info.Email, info.Name, role)
 	if err != nil {
 		logger.Error("Failed to find or create user", zap.Error(err))
 		span.RecordError(err)
@@ -207,24 +193,8 @@ func (h *Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.frontendURL+"#"+params.Encode(), http.StatusTemporaryRedirect)
 }
 
-// isMember reports whether email is an active direct member of the login group.
-func (h *Handler) isMember(ctx context.Context, email string) (bool, error) {
-	members, err := h.members.ListMembers(ctx, h.loginGroup)
-	if err != nil {
-		return false, err
-	}
-
-	for _, m := range members {
-		if strings.EqualFold(m.Email, email) && m.Status == activeMemberStatus {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
 func (h *Handler) configured() bool {
-	return h.provider.Configured() && h.loginGroup != "" && h.frontendURL != ""
+	return h.provider.Configured() && h.roles.LoginGroup() != "" && h.frontendURL != ""
 }
 
 // redirectError sends the user back to the frontend with a machine-readable reason.
