@@ -69,6 +69,7 @@ jobs:
     # DOCKER_REGISTRY_USERNAME / DOCKER_REGISTRY_TOKEN are in place.
     if: ${{ vars.DOCKER_IMAGE_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    environment: docker-hub
     steps:
       - name: Checkout source
         uses: actions/checkout@v5
