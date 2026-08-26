@@ -12,8 +12,10 @@ hand-edited OpenAPI.
 > adding a status code, or changing whether a response may be `null` all mean editing
 > the matching `service/*.tsp` in the same change.
 
-There is no CI check enforcing this, so the rule is the only thing keeping the spec
-honest. A spec that has drifted is worse than no spec: the frontend builds against it.
+CI compiles the spec and checks its formatting, but nothing can check it against the
+handlers -- a spec that describes a field the server stopped sending compiles perfectly.
+So the rule is still the only thing keeping the spec honest, and a spec that has drifted
+is worse than no spec: the frontend builds against it.
 
 ## Layout
 
@@ -26,7 +28,23 @@ honest. A spec that has drifted is worse than no spec: the frontend builds again
 | `service/user.tsp` | Profiles and the caller's mailing lists |
 | `service/group.tsp` | Mailing lists and their members |
 
-`tsp-output/` is generated and gitignored.
+`tsp-output/` is generated and gitignored, as is the `publish/` directory the
+deployment assembles.
+
+## Published
+
+<https://kyle9410-chen.github.io/sdc-manager-backend/> -- deployed by
+`.github/workflows/api-docs.yml` on every push to `main` that touches `docs/api/**`.
+The URL follows the repository owner; nothing here hardcodes it.
+
+| Path | Contents |
+|---|---|
+| `/` | Swagger UI (`swagger-ui.html`, served as `index.html`) |
+| `/openapi.yaml` | The emitted spec -- what the frontend and any codegen should read |
+| `/redocly.html` | Redocly's static rendering of the same spec |
+
+Pages must be configured once, by hand: **Settings -> Pages -> Build and deployment ->
+Source -> GitHub Actions**. Without it the `deploy` job fails.
 
 ## Commands
 
@@ -41,6 +59,11 @@ make clean
 ```
 
 `npx tsp format "**/*.tsp"` rewrites files in place when the format check fails.
+
+`.github/workflows/api-docs-check.yml` runs the format check and the compile on every
+pull request touching `docs/api/**`, which is exactly what `make` does here -- running
+it locally first saves a round trip. `make lint` deliberately stays out of CI: its
+warnings are catalogued below as ones that should not be fixed.
 
 ## Expected lint warnings
 

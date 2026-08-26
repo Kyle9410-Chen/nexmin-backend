@@ -18,8 +18,10 @@
     ></script>
     <script>
       window.onload = () => {
-        // Relative, unlike clustron-api's copy: this spec is not published anywhere,
-        // so `make preview` copies this file next to openapi.yaml and serves both.
+        // Relative, unlike clustron-api's copy, which hardcodes its Pages URL. This
+        // file is served as index.html next to openapi.yaml in both places that serve
+        // it -- `make preview` locally and GitHub Pages -- so one page works for both,
+        // and it keeps working if the repository moves to another owner.
         window.ui = SwaggerUIBundle({
           url: "./openapi.yaml",
           dom_id: "#swagger-ui",

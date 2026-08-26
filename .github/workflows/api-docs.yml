@@ -1,0 +1,70 @@
+name: Deploy API Docs
+
+# The spec lives in docs/api/, not at the repository root, so every step runs from
+# there and the trigger is filtered on that path -- a Go-only change does not
+# redeploy the documentation.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/api/**"
+      - ".github/workflows/api-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/api
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          # @typespec/compiler 1.15 requires node >= 22.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Style check
+        run: npx tsp format --check "**/*.tsp"
+
+      - name: Compile
+        run: npx tsp compile .
+
+      - name: Assemble the site
+        run: |
+          mkdir -p publish
+          cp tsp-output/schema/openapi.yaml publish/
+          cp swagger-ui.html publish/index.html
+          npx -y @redocly/cli@latest build-docs tsp-output/schema/openapi.yaml \
+            --output publish/redocly.html
+
+      # path is resolved from the repository root, not from working-directory.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/api/publish
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
