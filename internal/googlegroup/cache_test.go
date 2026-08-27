@@ -45,6 +45,44 @@ func TestCacheExpiresAndEvicts(t *testing.T) {
 	}
 }
 
+// The cache must not hand out the array it is holding: callers sort what they get -- the
+// group list is put into organizational order in place before it is rendered -- and a
+// caller that reorders the cache reorders it underneath everyone else. That is what made
+// the roster attribute people to the wrong mailing list.
+func TestCacheCopiesOnTheWayOut(t *testing.T) {
+	c := newCache[Member](time.Minute)
+	c.set("group@example.com", c.begin(), []Member{{Email: "a@example.com"}, {Email: "b@example.com"}})
+
+	got, _ := c.get("group@example.com")
+	got[0] = Member{Email: "clobbered@example.com"}
+
+	again, ok := c.get("group@example.com")
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if again[0].Email != "a@example.com" {
+		t.Fatalf("a caller mutating its own result changed the cache: %+v", again)
+	}
+}
+
+// The fetcher returns the same slice it stored, so the cache has to copy on the way in
+// too -- otherwise the very first caller still shares the cache's array.
+func TestCacheCopiesOnTheWayIn(t *testing.T) {
+	c := newCache[Member](time.Minute)
+	stored := []Member{{Email: "a@example.com"}, {Email: "b@example.com"}}
+
+	c.set("group@example.com", c.begin(), stored)
+	stored[0] = Member{Email: "clobbered@example.com"}
+
+	got, ok := c.get("group@example.com")
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if got[0].Email != "a@example.com" {
+		t.Fatalf("the fetcher mutating its own slice changed the cache: %+v", got)
+	}
+}
+
 func TestCacheConcurrentAccess(t *testing.T) {
 	c := newCache[Member](time.Minute)
 	done := make(chan struct{})

@@ -9,12 +9,15 @@ package membership
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 
 	"nycu-sdc/nexmin/internal/googlegroup"
 	"nycu-sdc/nexmin/internal/orgchart"
+	"nycu-sdc/nexmin/internal/user"
 
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -190,33 +193,61 @@ func (s *Service) RosterGroupKeys(ctx context.Context) (map[string][]string, err
 	return keys, nil
 }
 
-// AddToLoginGroup puts email on the mailing list that gates sign-in, and reports the
-// lists they are on afterwards along with the role that was actually applied.
+// membershipWrite is one membership an add request will create, in the order it is
+// written.
+type membershipWrite struct {
+	key  string
+	role string
+}
+
+// AddToRoster puts email on the mailing list that gates sign-in and on every other list
+// the caller named, and reports the lists they are on afterwards along with the role
+// actually applied on the login group.
 //
-// The role is validated here rather than by the caller because NormalizeRole lives in
-// internal/googlegroup, which internal/user may not import. An empty role means MEMBER,
-// matching Google's own default.
+// The login group is always written and does not have to be named: being on it is what
+// makes someone a member of the club, and callers should not have to know its address.
+// Naming it anyway is how a role is set on it -- and note what a non-MEMBER role there
+// means, since auth.RoleResolver maps OWNER and MANAGER of the login group onto this
+// service's admin role.
 //
-// Note what a non-MEMBER role means: auth.RoleResolver maps OWNER and MANAGER of the
-// login group onto this service's admin role, so adding someone as either is granting
-// them administrative access here.
-func (s *Service) AddToLoginGroup(ctx context.Context, email, role string) ([]string, string, error) {
-	traceCtx, span := s.tracer.Start(ctx, "AddToLoginGroup")
+// Roles and group keys are validated before anything is written, so a typo costs nothing
+// rather than leaving the person on half the lists. Being on a list already is not a
+// failure: the request says where they should end up, and that part of it is already
+// true. Nothing is rolled back if a later write fails, but because every write is
+// idempotent, repeating the whole request is always safe.
+//
+// The returned loginRole is empty when the login group membership already existed, which
+// is the caller's signal that it has to look the current role up rather than derive it
+// from what it asked for.
+func (s *Service) AddToRoster(ctx context.Context, email string, groups []user.GroupRole) ([]string, string, error) {
+	traceCtx, span := s.tracer.Start(ctx, "AddToRoster")
 	defer span.End()
 	logger := logutil.WithContext(traceCtx, s.logger)
 
-	normalized, err := googlegroup.NormalizeRole(role)
+	writes, err := s.planWrites(traceCtx, groups)
 	if err != nil {
-		return nil, "", err
-	}
-
-	if _, err := s.groups.AddMember(traceCtx, s.loginGroup, email, normalized); err != nil {
 		span.RecordError(err)
 		return nil, "", err
 	}
 
-	logger.Info("Added member to the login group",
-		zap.String("login_group", s.loginGroup), zap.String("email", email), zap.String("role", normalized))
+	loginRole := ""
+	for i, w := range writes {
+		_, err := s.groups.AddMember(traceCtx, w.key, email, w.role)
+		switch {
+		case err == nil:
+			if i == 0 {
+				loginRole = w.role
+			}
+			logger.Info("Added member to a mailing list",
+				zap.String("group_key", w.key), zap.String("email", email), zap.String("role", w.role))
+		case errors.Is(err, googlegroup.ErrMemberAlreadyExists):
+			logger.Info("Member is already on the mailing list, leaving them as they are",
+				zap.String("group_key", w.key), zap.String("email", email))
+		default:
+			span.RecordError(err)
+			return nil, "", err
+		}
+	}
 
 	keys, err := s.GroupKeysForEmail(traceCtx, email)
 	if err != nil {
@@ -225,46 +256,225 @@ func (s *Service) AddToLoginGroup(ctx context.Context, email, role string) ([]st
 	}
 
 	// The Directory API is eventually consistent, so the read above may not show the
-	// membership that was just created. Reporting a list without the login group would
-	// look exactly like the write having been undone, so fill in the one fact this
-	// request knows for certain.
-	return s.visibleKeys(withKey(keys, s.loginGroup)), normalized, nil
+	// memberships that were just created. Reporting a list without them would look
+	// exactly like the write having been undone, so fill in what this request knows for
+	// certain.
+	want := make([]string, 0, len(writes))
+	for _, w := range writes {
+		want = append(want, w.key)
+	}
+
+	return s.visibleKeys(withKeys(keys, want)), loginRole, nil
 }
 
-// RemoveFromLoginGroup takes email off the mailing list that gates sign-in, which also
-// removes them from the roster and stops them signing in.
-func (s *Service) RemoveFromLoginGroup(ctx context.Context, email string) error {
-	traceCtx, span := s.tracer.Start(ctx, "RemoveFromLoginGroup")
-	defer span.End()
-	logger := logutil.WithContext(traceCtx, s.logger)
+// planWrites turns the requested lists into the ordered set of memberships to create,
+// with the login group first, and rejects anything Google would.
+//
+// The login group leads so that a failure part-way through still leaves the person on the
+// roster and able to sign in, where the problem is visible and the request can simply be
+// repeated.
+func (s *Service) planWrites(ctx context.Context, groups []user.GroupRole) ([]membershipWrite, error) {
+	// Google's own default for members.insert, and what someone added without a role
+	// should get.
+	writes := []membershipWrite{{key: s.loginGroup, role: googlegroup.RoleMember}}
+	loginNamed := false
 
-	if err := s.groups.RemoveMember(traceCtx, s.loginGroup, email); err != nil {
-		span.RecordError(err)
+	for _, g := range groups {
+		key := strings.TrimSpace(g.Key)
+		if key == "" {
+			return nil, handlerutil.NewValidationError("groups", g.Key, "group key is required")
+		}
+
+		role, err := googlegroup.NormalizeRole(g.Role)
+		if err != nil {
+			return nil, err
+		}
+
+		if sameGroupKey(key, s.loginGroup) {
+			if loginNamed {
+				return nil, handlerutil.NewValidationError("groups", key, "group is listed more than once")
+			}
+			loginNamed = true
+			writes[0].role = role
+			continue
+		}
+
+		for _, w := range writes[1:] {
+			if sameGroupKey(w.key, key) {
+				return nil, handlerutil.NewValidationError("groups", key, "group is listed more than once")
+			}
+		}
+
+		writes = append(writes, membershipWrite{key: key, role: role})
+	}
+
+	if err := s.validateGroupKeys(ctx, writes[1:]); err != nil {
+		return nil, err
+	}
+
+	return writes, nil
+}
+
+// validateGroupKeys rejects keys that name no mailing list in the account.
+//
+// Checking up front is what keeps a typo from leaving someone on half the lists they were
+// meant to be on. It reads the account-wide group list, which is cached, and is skipped
+// entirely when the caller named no lists -- the login group is configuration, not caller
+// input, and is not checked here.
+func (s *Service) validateGroupKeys(ctx context.Context, writes []membershipWrite) error {
+	if len(writes) == 0 {
+		return nil
+	}
+
+	all, err := s.groups.ListGroups(ctx)
+	if err != nil {
 		return err
 	}
 
-	logger.Info("Removed member from the login group",
-		zap.String("login_group", s.loginGroup), zap.String("email", email))
+	for _, w := range writes {
+		if !knownGroup(all, w.key) {
+			return handlerutil.NewValidationError("groups", w.key, "no mailing list with this key exists")
+		}
+	}
 
 	return nil
 }
 
-// withKey returns keys with want present, comparing the way group keys are compared
-// everywhere else -- the login group may be configured as a full address while the
-// lists come back bare.
-func withKey(keys []string, want string) []string {
-	bare := want
-	if at := strings.Index(bare, "@"); at >= 0 {
-		bare = bare[:at]
-	}
-
-	for _, k := range keys {
-		if strings.EqualFold(k, bare) || strings.EqualFold(k, want) {
-			return keys
+// knownGroup reports whether key addresses one of the account's groups, by bare name,
+// full address, alias or immutable ID -- every spelling the Directory API accepts.
+func knownGroup(all []googlegroup.Group, key string) bool {
+	for _, g := range all {
+		if g.ID != "" && strings.EqualFold(g.ID, key) {
+			return true
+		}
+		if sameGroupKey(g.Email, key) {
+			return true
+		}
+		for _, alias := range g.Aliases {
+			if sameGroupKey(alias, key) {
+				return true
+			}
 		}
 	}
 
-	return append(append([]string(nil), keys...), bare)
+	return false
+}
+
+// RemoveFromRoster takes email off every mailing list they are listed on.
+//
+// Removing them from the login group alone would take them off the roster and stop them
+// signing in while leaving them on the lists that actually carry the club's mail. The
+// login group goes last, so a failure part-way through leaves them on the roster where
+// they are still visible and the request can simply be repeated.
+//
+// Nothing is rolled back on failure, but every removal is idempotent, so repeating the
+// whole request is always safe.
+func (s *Service) RemoveFromRoster(ctx context.Context, email string) error {
+	traceCtx, span := s.tracer.Start(ctx, "RemoveFromRoster")
+	defer span.End()
+	logger := logutil.WithContext(traceCtx, s.logger)
+
+	// expand, deliberately, and not GroupKeysForEmail: that one drops the sections the
+	// chart marks hidden, and a list nobody displays still delivers mail.
+	lists, err := s.expand(traceCtx, email)
+	if err != nil {
+		span.RecordError(err)
+		return err
+	}
+
+	for _, m := range lists {
+		if sameGroupKey(m.Key, s.loginGroup) {
+			continue
+		}
+		if err := s.removeMembership(traceCtx, logger, m.Key, email); err != nil {
+			span.RecordError(err)
+			return err
+		}
+	}
+
+	// Always attempted, whether or not the read above listed it: someone added moments
+	// ago may not show up on their own group list yet, and leaving them on the login
+	// group would leave them able to sign in.
+	if err := s.removeMembership(traceCtx, logger, s.loginGroup, email); err != nil {
+		span.RecordError(err)
+		return err
+	}
+
+	logger.Info("Removed member from every mailing list",
+		zap.String("email", email), zap.Int("lists", len(lists)))
+
+	return nil
+}
+
+// removeMembership takes email off one list, treating "they were not on it" as success.
+//
+// Google answers a member key it cannot resolve with a 400 whose detail reads "Missing
+// required field: memberKey" rather than a 404, so both sentinels count. Either way the
+// request asked for them not to be on the list, and they are not.
+func (s *Service) removeMembership(ctx context.Context, logger *zap.Logger, groupKey, email string) error {
+	err := s.groups.RemoveMember(ctx, groupKey, email)
+	switch {
+	case err == nil:
+		logger.Info("Removed member from a mailing list",
+			zap.String("group_key", groupKey), zap.String("email", email))
+		return nil
+	case errors.Is(err, googlegroup.ErrMemberNotFound), errors.Is(err, googlegroup.ErrInvalidMemberRequest):
+		logger.Debug("Member was not on the mailing list, nothing to remove",
+			zap.String("group_key", groupKey), zap.String("email", email))
+		return nil
+	default:
+		return err
+	}
+}
+
+// withKeys returns keys with every entry of want present, compared the way group keys are
+// compared everywhere else -- the login group may be configured as a full address, and a
+// caller may name a list either way, while the lists themselves come back bare.
+func withKeys(keys, want []string) []string {
+	out := append([]string(nil), keys...)
+
+	for _, w := range want {
+		bare := bareGroupKey(w)
+
+		found := false
+		for _, k := range out {
+			if sameGroupKey(k, bare) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, bare)
+		}
+	}
+
+	return out
+}
+
+// sameGroupKey reports whether two keys name the same mailing list. Only the part before
+// the "@" is compared: the API speaks bare names, while configuration and Google both
+// deal in full addresses.
+func sameGroupKey(a, b string) bool {
+	return strings.EqualFold(bareGroupKey(a), bareGroupKey(b))
+}
+
+func bareGroupKey(key string) string {
+	if at := strings.Index(key, "@"); at >= 0 {
+		return key[:at]
+	}
+
+	return key
+}
+
+// groupMembers is one group's member list, carrying the key it was read under.
+//
+// The key travels with the members rather than being looked up again by position when
+// the index is assembled: the two are minutes apart in wall-clock terms on a cold cache,
+// and pairing them afterwards means anything that reorders the group list in between
+// attributes every one of these people to the wrong mailing list.
+type groupMembers struct {
+	key     string
+	members []googlegroup.Member
 }
 
 // directIndex reads every group's member list once and inverts it into
@@ -275,17 +485,18 @@ func (s *Service) directIndex(ctx context.Context) (map[string][]string, error) 
 		return nil, err
 	}
 
-	lists := make([][]googlegroup.Member, len(all))
+	lists := make([]groupMembers, len(all))
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(memberLookupConcurrency)
 	for i, g := range all {
+		key := g.Email
 		group.Go(func() error {
-			members, err := s.groups.ListMembers(groupCtx, g.Email)
+			members, err := s.groups.ListMembers(groupCtx, key)
 			if err != nil {
 				return err
 			}
-			lists[i] = members
+			lists[i] = groupMembers{key: key, members: members}
 			return nil
 		})
 	}
@@ -296,13 +507,13 @@ func (s *Service) directIndex(ctx context.Context) (map[string][]string, error) 
 	}
 
 	index := make(map[string][]string)
-	for i, g := range all {
-		for _, m := range lists[i] {
+	for _, list := range lists {
+		for _, m := range list.members {
 			if m.Type != memberTypeUser {
 				continue
 			}
 			email := strings.ToLower(m.Email)
-			index[email] = append(index[email], g.Email)
+			index[email] = append(index[email], list.key)
 		}
 	}
 

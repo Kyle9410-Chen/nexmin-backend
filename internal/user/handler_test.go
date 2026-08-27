@@ -115,23 +115,36 @@ type fakeRoster struct {
 	groups []string
 	err    error
 
-	addedEmail string
-	addedRole  string
-	removed    string
+	// loginRole is what the service reports having applied on the login group. Empty
+	// stands for "the membership already existed", which is what makes the handler look
+	// the current role up instead.
+	loginRole string
+	unwritten bool
+
+	addedEmail  string
+	addedGroups []GroupRole
+	removed     string
 }
 
-func (f *fakeRoster) AddToLoginGroup(_ context.Context, email, role string) ([]string, string, error) {
-	f.addedEmail, f.addedRole = email, role
+func (f *fakeRoster) AddToRoster(_ context.Context, email string, groups []GroupRole) ([]string, string, error) {
+	f.addedEmail, f.addedGroups = email, groups
 	if f.err != nil {
 		return nil, "", f.err
 	}
+
+	if f.unwritten {
+		return f.groups, "", nil
+	}
+
+	role := f.loginRole
 	if role == "" {
 		role = "MEMBER"
 	}
+
 	return f.groups, role, nil
 }
 
-func (f *fakeRoster) RemoveFromLoginGroup(_ context.Context, email string) error {
+func (f *fakeRoster) RemoveFromRoster(_ context.Context, email string) error {
 	f.removed = email
 	return f.err
 }
@@ -532,19 +545,57 @@ func TestAddHandlerReturnsTheNewEntry(t *testing.T) {
 	}
 }
 
-// A role of MANAGER on the login group is this service's admin. The endpoint is called
-// "add a user", so this consequence needs pinning down.
+// Naming the login group with a role of MANAGER is this service's admin. The endpoint is
+// called "add a user", so this consequence needs pinning down.
 func TestAddHandlerWithManagerRoleGrantsAdmin(t *testing.T) {
-	roster := &fakeRoster{groups: []string{"general"}}
+	roster := &fakeRoster{groups: []string{"general"}, loginRole: "MANAGER"}
 
 	rec := serveWithRoster(t, &fakeStore{}, memberRoles(), fakeGroups{}, roster,
-		http.MethodPost, "/api/users", `{"email":"officer@example.com","role":"MANAGER"}`, true)
+		http.MethodPost, "/api/users", `{"email":"officer@example.com","groups":[{"key":"general","role":"MANAGER"}]}`, true)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("got status %d, want 201; body %s", rec.Code, rec.Body.String())
 	}
 	if got := decodeEntry(t, rec); got.Role != RoleAdmin {
 		t.Fatalf("got role %q, want admin", got.Role)
+	}
+}
+
+// The lists reach the roster writer exactly as asked for, in order: the service decides
+// what to do with them, the handler only carries them across.
+func TestAddHandlerForwardsEveryRequestedList(t *testing.T) {
+	roster := &fakeRoster{groups: []string{"general", "engineering"}}
+
+	rec := serveWithRoster(t, &fakeStore{}, memberRoles(), fakeGroups{}, roster,
+		http.MethodPost, "/api/users",
+		`{"email":"newcomer@example.com","groups":[{"key":"engineering","role":"MANAGER"},{"key":"design"}]}`, true)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want 201; body %s", rec.Code, rec.Body.String())
+	}
+
+	want := []GroupRole{{Key: "engineering", Role: "MANAGER"}, {Key: "design"}}
+	if len(roster.addedGroups) != len(want) {
+		t.Fatalf("got %v, want %v", roster.addedGroups, want)
+	}
+	for i := range want {
+		if roster.addedGroups[i] != want[i] {
+			t.Fatalf("got %v, want %v", roster.addedGroups, want)
+		}
+	}
+}
+
+// Adding someone who was already on the login group writes nothing there, so the role
+// they hold has to be read rather than derived from what the request asked for.
+func TestAddHandlerReportsTheLiveRoleWhenNothingWasWritten(t *testing.T) {
+	roster := &fakeRoster{groups: []string{"general"}, unwritten: true}
+	roles := fakeRoles{roles: map[string]string{"officer@example.com": RoleAdmin}}
+
+	rec := serveWithRoster(t, &fakeStore{}, roles, fakeGroups{}, roster,
+		http.MethodPost, "/api/users", `{"email":"officer@example.com","groups":[{"key":"engineering"}]}`, true)
+
+	if got := decodeEntry(t, rec); got.Role != RoleAdmin {
+		t.Fatalf("got role %q, want the role they already hold", got.Role)
 	}
 }
 
@@ -566,6 +617,7 @@ func TestAddHandlerRejectsBadRequests(t *testing.T) {
 	tests := []struct{ name, body string }{
 		{"missing email", `{}`},
 		{"malformed email", `{"email":"not-an-email"}`},
+		{"group without a key", `{"email":"x@example.com","groups":[{"role":"MEMBER"}]}`},
 		{"malformed body", `{`},
 	}
 

@@ -46,11 +46,29 @@ type RoleResolver interface {
 //
 // Like RoleResolver it is declared in terms of plain strings so this package never
 // imports internal/googlegroup.
-// RosterWriter changes who is on the login mailing list, and therefore who is on the
+// GroupRole names one mailing list and the role to grant on it.
+//
+// Plain strings, like the rest of this package's outward-facing contracts: the legal
+// roles are Google's, and validating them lives in internal/googlegroup, which
+// internal/user may not import.
+type GroupRole struct {
+	Key  string
+	Role string
+}
+
+// RosterWriter changes which mailing lists someone is on, and therefore who is on the
 // roster and who can sign in. Satisfied by membership.Service.
 type RosterWriter interface {
-	AddToLoginGroup(ctx context.Context, email, role string) (groups []string, role_ string, err error)
-	RemoveFromLoginGroup(ctx context.Context, email string) error
+	// AddToRoster puts email on the login mailing list and on every list named, and
+	// reports the lists they are on afterwards.
+	//
+	// loginRole is the role actually applied on the login group, or "" when the
+	// membership already existed and nothing was written -- in which case the caller has
+	// to look the current role up rather than derive it from what it asked for.
+	AddToRoster(ctx context.Context, email string, groups []GroupRole) (keys []string, loginRole string, err error)
+
+	// RemoveFromRoster takes email off every mailing list they are on.
+	RemoveFromRoster(ctx context.Context, email string) error
 }
 
 type MembershipLister interface {
@@ -87,14 +105,22 @@ type Response struct {
 	Groups []string `json:"groups"`
 }
 
+// GroupMembershipRequest is one mailing list to put the new member on, and the role to
+// give them there. Roles are Google's MEMBER/MANAGER/OWNER, not this service's; omit for
+// MEMBER, which is Google's own default.
+type GroupMembershipRequest struct {
+	Key  string `json:"key" validate:"required"`
+	Role string `json:"role"`
+}
+
 // AddRosterMemberRequest adds someone to the club.
 type AddRosterMemberRequest struct {
 	Email string `json:"email" validate:"required,email"`
 
-	// Role is the role on the login mailing list, not this service's role. Omit for
-	// MEMBER. MANAGER and OWNER map onto this service's admin, so setting either grants
-	// administrative access.
-	Role string `json:"role"`
+	// Groups are the mailing lists to put them on beyond the login group, which is
+	// always written and does not have to be named. Naming it anyway is allowed and is
+	// how a role is set on it -- MANAGER or OWNER there grants this service's admin.
+	Groups []GroupMembershipRequest `json:"groups" validate:"dive"`
 }
 
 // RosterProfile is what this service knows about someone beyond their membership.
@@ -313,12 +339,16 @@ func (h *Handler) ListHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AddHandler puts someone on the club roster by adding them to the login mailing list.
-// Admin only.
+// AddHandler puts someone on the club roster by adding them to the login mailing list,
+// and to whatever other lists the request names. Admin only.
 //
-// The list is what decides who exists and who may sign in, so this is the whole of
+// The login group is what decides who exists and who may sign in, so this is the whole of
 // "add a member" -- there is no local row to create; one appears when they first sign
-// in. Note that a role of MANAGER or OWNER grants this service's admin role.
+// in. Note that naming the login group with a role of MANAGER or OWNER grants this
+// service's admin role.
+//
+// Adding someone who is already on one of the lists is not an error: the request says
+// where they should end up, and that part of it is already true.
 func (h *Handler) AddHandler(w http.ResponseWriter, r *http.Request) {
 	traceCtx, span := h.tracer.Start(r.Context(), "AddHandler")
 	defer span.End()
@@ -330,17 +360,22 @@ func (h *Handler) AddHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groups, groupRole, err := h.roster.AddToLoginGroup(traceCtx, req.Email, req.Role)
+	// Converted rather than mapped field by field, the same way jwt.User is: the
+	// conversion stops compiling if either shape drifts from the other.
+	wanted := make([]GroupRole, 0, len(req.Groups))
+	for _, g := range req.Groups {
+		wanted = append(wanted, GroupRole(g))
+	}
+
+	groups, loginRole, err := h.roster.AddToRoster(traceCtx, req.Email, wanted)
 	if err != nil {
 		h.problemWriter.WriteErrorWithRequest(traceCtx, r, w, err, logger)
 		return
 	}
 
 	entry := RosterEntry{
-		Email: req.Email,
-		// Mapped locally rather than read back: Google may not have propagated the
-		// membership yet, and this request already knows the role it applied.
-		Role:   h.roles.LocalRoleFor(groupRole),
+		Email:  req.Email,
+		Role:   h.addedRole(traceCtx, logger, req.Email, loginRole),
 		Groups: groups,
 	}
 
@@ -353,16 +388,49 @@ func (h *Handler) AddHandler(w http.ResponseWriter, r *http.Request) {
 		entry.Profile = newRosterProfile(existing[0])
 	}
 
-	logger.Info("Added member to the roster", zap.String("email", req.Email), zap.String("group_role", groupRole))
+	logger.Info("Added member to the roster",
+		zap.String("email", req.Email), zap.Int("groups", len(groups)), zap.String("login_role", loginRole))
 
 	handlerutil.WriteJSONResponse(w, http.StatusCreated, entry)
 }
 
-// RemoveHandler takes someone off the club roster. Admin only.
+// addedRole reports the local role of someone who was just added.
+//
+// loginRole is what the write applied on the login group, and mapping it locally is what
+// keeps this correct straight after a write: Google may not have propagated the new
+// membership yet, so reading it back could report nothing. An empty loginRole means the
+// membership already existed and nothing was written, and then the live value is the only
+// answer -- falling back to member, as everywhere else, when Google cannot be reached.
+func (h *Handler) addedRole(ctx context.Context, logger *zap.Logger, email, loginRole string) string {
+	if loginRole != "" {
+		return h.roles.LocalRoleFor(loginRole)
+	}
+
+	roles, err := h.roles.LocalRoles(ctx)
+	if err != nil {
+		logger.Warn("Failed to resolve the role of an existing member, reporting member", zap.String("email", email), zap.Error(err))
+		return RoleMember
+	}
+
+	if role, ok := roles[strings.ToLower(email)]; ok {
+		return role
+	}
+
+	return RoleMember
+}
+
+// RemoveHandler takes someone off the club roster, and off every other mailing list they
+// are on. Admin only.
+//
+// Removing them from the login group alone would take them off the roster and stop them
+// signing in while leaving them on the lists that actually carry the club's mail, which
+// is not what "remove from the club" means to anyone reading it.
 //
 // Addressed by email, not by the UUID GET /api/users/{user_id} takes: someone who has
 // never signed in has no local row and therefore no UUID, and they are exactly the
 // people a roster edit is most likely to touch.
+//
+// The local profile row is left alone, so it comes back if they are ever re-added.
 //
 // Nothing stops an admin removing themselves, which would leave them unable to sign
 // back in. The equivalent group route has no such guard either, and one that only
@@ -378,12 +446,12 @@ func (h *Handler) RemoveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.roster.RemoveFromLoginGroup(traceCtx, email); err != nil {
+	if err := h.roster.RemoveFromRoster(traceCtx, email); err != nil {
 		h.problemWriter.WriteErrorWithRequest(traceCtx, r, w, err, logger)
 		return
 	}
 
-	logger.Info("Removed member from the roster", zap.String("email", email))
+	logger.Info("Removed member from every mailing list", zap.String("email", email))
 
 	w.WriteHeader(http.StatusNoContent)
 }

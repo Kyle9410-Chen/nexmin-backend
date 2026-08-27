@@ -1,6 +1,7 @@
 package googlegroup
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -61,7 +62,14 @@ func (c *cache[T]) begin() uint64 {
 	return c.generation
 }
 
-// get returns the cached items for key and whether a live entry was found.
+// get returns a copy of the cached items for key and whether a live entry was found.
+//
+// The copy is not optional. Callers treat what they get back as their own -- the group
+// list is sorted into organizational order in place before it is rendered -- and handing
+// out the cache's own slice let one caller reorder what another was still reading. That
+// broke the roster, which pairs a group with its member list by position, and it is a
+// data race besides. A shallow copy of at most a few hundred elements is nothing next to
+// the Google round trip this cache exists to avoid.
 func (c *cache[T]) get(key string) ([]T, bool) {
 	c.mu.RLock()
 	e, ok := c.entries[key]
@@ -82,7 +90,7 @@ func (c *cache[T]) get(key string) ([]T, bool) {
 		return nil, false
 	}
 
-	return e.items, true
+	return slices.Clone(e.items), true
 }
 
 // clear drops every entry, invalidates fetches already in flight, and closes the cache
@@ -101,8 +109,12 @@ func (c *cache[T]) clear() {
 	c.suppressUntil = time.Now().Add(c.suppress)
 }
 
-// set stores items under key, unless the cache was invalidated since the fetch began or
-// is still inside the post-write suppression window. gen comes from begin.
+// set stores a copy of items under key, unless the cache was invalidated since the fetch
+// began or is still inside the post-write suppression window. gen comes from begin.
+//
+// It copies for the same reason get does: the fetcher goes on to return its own slice to
+// its caller, so storing that slice would leave the cache sharing an array with whoever
+// asked first. See get.
 func (c *cache[T]) set(key string, gen uint64, items []T) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -119,7 +131,7 @@ func (c *cache[T]) set(key string, gen uint64, items []T) {
 	}
 
 	c.entries[key] = entry[T]{
-		items:     items,
+		items:     slices.Clone(items),
 		expiresAt: time.Now().Add(c.ttl),
 	}
 }

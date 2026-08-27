@@ -10,6 +10,7 @@ import (
 
 	"nycu-sdc/nexmin/internal/googlegroup"
 	"nycu-sdc/nexmin/internal/orgchart"
+	"nycu-sdc/nexmin/internal/user"
 
 	"go.uber.org/zap/zaptest"
 )
@@ -24,10 +25,23 @@ type fakeGroups struct {
 	// it. A "+" prefix marks a nested group rather than a person.
 	members map[string][]string
 
+	// groupList, when set, is what ListGroups hands back -- the same slice every time,
+	// so a test can reorder it the way GET /api/groups used to reorder the cached one.
+	groupList []googlegroup.Group
+
+	// gate, when set, holds every member read until it is closed. entered receives once
+	// per read that has arrived, so a test can wait until the fan-out is in flight.
+	gate    chan struct{}
+	entered chan struct{}
+
 	directErr  error
 	listErr    error
 	membersErr error
 	writeErr   error
+
+	// writeErrFor fails one group's write, which is how a partial failure part-way
+	// through a multi-list request is set up.
+	writeErrFor map[string]error
 
 	added   [][3]string
 	removed [][2]string
@@ -55,6 +69,9 @@ func (f *fakeGroups) AddMember(_ context.Context, groupKey, email, role string) 
 	if f.writeErr != nil {
 		return googlegroup.Member{}, f.writeErr
 	}
+	if err := f.writeErrFor[groupKey]; err != nil {
+		return googlegroup.Member{}, err
+	}
 	f.added = append(f.added, [3]string{groupKey, email, role})
 	return googlegroup.Member{Email: email, Role: role, Type: "USER"}, nil
 }
@@ -66,13 +83,38 @@ func (f *fakeGroups) RemoveMember(_ context.Context, groupKey, memberKey string)
 	if f.writeErr != nil {
 		return f.writeErr
 	}
+	if err := f.writeErrFor[groupKey]; err != nil {
+		return err
+	}
 	f.removed = append(f.removed, [2]string{groupKey, memberKey})
 	return nil
+}
+
+// addedGroups is the list of groups written to, in the order they were written.
+func (f *fakeGroups) addedGroups() []string {
+	keys := make([]string, 0, len(f.added))
+	for _, a := range f.added {
+		keys = append(keys, a[0])
+	}
+	return keys
+}
+
+// removedGroups is the list of groups removed from, in the order they were removed.
+func (f *fakeGroups) removedGroups() []string {
+	keys := make([]string, 0, len(f.removed))
+	for _, r := range f.removed {
+		keys = append(keys, r[0])
+	}
+	return keys
 }
 
 func (f *fakeGroups) ListGroups(_ context.Context) ([]googlegroup.Group, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
+	}
+
+	if f.groupList != nil {
+		return f.groupList, nil
 	}
 
 	groups := make([]googlegroup.Group, 0, len(f.members))
@@ -84,6 +126,11 @@ func (f *fakeGroups) ListGroups(_ context.Context) ([]googlegroup.Group, error) 
 }
 
 func (f *fakeGroups) ListMembers(_ context.Context, groupKey string) ([]googlegroup.Member, error) {
+	if f.gate != nil {
+		f.entered <- struct{}{}
+		<-f.gate
+	}
+
 	f.mu.Lock()
 	if f.calls == nil {
 		f.calls = map[string]int{}
@@ -384,24 +431,72 @@ func TestRosterGroupKeysDoesNotWalkNesting(t *testing.T) {
 	}
 }
 
-// Adding to the roster means adding to the login group -- that is the whole operation,
-// and it must use the configured list rather than a hard-coded name.
-func TestAddToLoginGroupTargetsTheConfiguredList(t *testing.T) {
+// The club is defined by the login group, so adding someone always writes it -- the
+// caller does not have to know its address, and must not be able to leave it out.
+func TestAddToRosterAlwaysWritesTheLoginGroup(t *testing.T) {
 	groups := &fakeGroups{members: map[string][]string{"general": {}}}
 
-	if _, _, err := newService(t, groups).AddToLoginGroup(t.Context(), "alice@example.com", ""); err != nil {
+	_, role, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", nil)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if len(groups.added) != 1 {
-		t.Fatalf("got %d writes, want 1", len(groups.added))
+		t.Fatalf("got %d writes, want 1: %v", len(groups.added), groups.added)
 	}
 	if got := groups.added[0]; got[0] != "general" || got[1] != "alice@example.com" || got[2] != "MEMBER" {
 		t.Fatalf("got %v, want the login group and Google's default role", got)
 	}
+	if role != "MEMBER" {
+		t.Fatalf("got applied role %q, want MEMBER", role)
+	}
 }
 
-func TestAddToLoginGroupNormalizesRole(t *testing.T) {
+// The login group goes first so that a failure further down still leaves the person on
+// the roster, where the problem is visible and the request can be repeated.
+func TestAddToRosterWritesEveryRequestedListWithTheLoginGroupFirst(t *testing.T) {
+	groups := &fakeGroups{members: map[string][]string{"general": {}, "engineering": {}, "design": {}}}
+
+	_, _, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", []user.GroupRole{
+		{Key: "engineering", Role: "manager"},
+		{Key: "design"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := strings.Join(groups.addedGroups(), ","); got != "general,engineering,design" {
+		t.Fatalf("got write order %q, want general,engineering,design", got)
+	}
+	if groups.added[1][2] != "MANAGER" {
+		t.Fatalf("got %v, want the normalized role on engineering", groups.added[1])
+	}
+	if groups.added[2][2] != "MEMBER" {
+		t.Fatalf("got %v, want Google's default role on design", groups.added[2])
+	}
+}
+
+// Naming the login group is allowed, and is how a role is set on it -- which is also how
+// admin is granted. It must still only be written once.
+func TestAddToRosterHonoursAnExplicitLoginGroupRole(t *testing.T) {
+	groups := &fakeGroups{members: map[string][]string{"general": {}}}
+
+	_, role, err := newService(t, groups).AddToRoster(t.Context(), "officer@example.com", []user.GroupRole{
+		{Key: "general", Role: "MANAGER"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(groups.added) != 1 {
+		t.Fatalf("got %d writes, want 1: %v", len(groups.added), groups.added)
+	}
+	if groups.added[0][2] != "MANAGER" || role != "MANAGER" {
+		t.Fatalf("got %v / %q, want MANAGER applied to the login group", groups.added[0], role)
+	}
+}
+
+func TestAddToRosterNormalizesRole(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", "MEMBER"},
 		{"manager", "MANAGER"},
@@ -410,70 +505,258 @@ func TestAddToLoginGroupNormalizesRole(t *testing.T) {
 
 	for _, tt := range tests {
 		groups := &fakeGroups{members: map[string][]string{"general": {}}}
-		_, role, err := newService(t, groups).AddToLoginGroup(t.Context(), "alice@example.com", tt.in)
+		_, role, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", []user.GroupRole{
+			{Key: "general", Role: tt.in},
+		})
 		if err != nil {
 			t.Fatalf("unexpected error for %q: %v", tt.in, err)
 		}
 		if role != tt.want {
-			t.Fatalf("AddToLoginGroup(%q) applied %q, want %q", tt.in, role, tt.want)
+			t.Fatalf("AddToRoster(%q) applied %q, want %q", tt.in, role, tt.want)
 		}
 	}
 }
 
-func TestAddToLoginGroupRejectsUnknownRole(t *testing.T) {
-	groups := &fakeGroups{members: map[string][]string{"general": {}}}
-
-	if _, _, err := newService(t, groups).AddToLoginGroup(t.Context(), "alice@example.com", "SUPERUSER"); err == nil {
-		t.Fatal("expected an unknown role to be rejected")
+// The request says where someone should end up. Being on a list already is that request
+// already being satisfied, not a failure -- and without this, adding an existing member
+// to one more list would stop at the login group and do nothing at all.
+func TestAddToRosterTreatsAnExistingMembershipAsSuccess(t *testing.T) {
+	groups := &fakeGroups{
+		members:     map[string][]string{"general": {}, "engineering": {}},
+		writeErrFor: map[string]error{"general": googlegroup.ErrMemberAlreadyExists},
 	}
-	if len(groups.added) != 0 {
-		t.Fatal("a rejected role must not reach Google")
+
+	_, role, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", []user.GroupRole{
+		{Key: "engineering"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := strings.Join(groups.addedGroups(), ","); got != "engineering" {
+		t.Fatalf("got writes %q, want the remaining list to still be written", got)
+	}
+	// Nothing was written to the login group, so the caller has to look the role up.
+	if role != "" {
+		t.Fatalf("got applied role %q, want empty for a membership that already existed", role)
 	}
 }
 
-// The Directory API is eventually consistent, so the read-back after the write can
-// still be missing the membership that was just created. Reporting a list without the
-// login group would look exactly like the write having been undone.
-func TestAddToLoginGroupReportsTheLoginGroupEvenIfTheReadBackLags(t *testing.T) {
+// A typo must cost nothing rather than leaving someone on half the lists they were meant
+// to be on, so everything is validated before anything is written.
+func TestAddToRosterRejectsBadRequestsBeforeWritingAnything(t *testing.T) {
+	tests := []struct {
+		name string
+		want []user.GroupRole
+	}{
+		{"unknown group", []user.GroupRole{{Key: "no-such-list"}}},
+		{"unknown role", []user.GroupRole{{Key: "engineering", Role: "SUPERUSER"}}},
+		{"empty key", []user.GroupRole{{Key: "  "}}},
+		{"duplicate group", []user.GroupRole{{Key: "engineering"}, {Key: "engineering"}}},
+		{"login group twice", []user.GroupRole{{Key: "general"}, {Key: "general@sdc.nycu.club"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groups := &fakeGroups{members: map[string][]string{"general": {}, "engineering": {}}}
+
+			if _, _, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", tt.want); err == nil {
+				t.Fatal("expected the request to be rejected")
+			}
+			if len(groups.added) != 0 {
+				t.Fatalf("a rejected request reached Google: %v", groups.added)
+			}
+		})
+	}
+}
+
+// Nothing is rolled back when a later list fails. That is deliberate -- every write is
+// idempotent, so repeating the request is the recovery -- and it is pinned here so the
+// behaviour is a decision rather than an accident.
+func TestAddToRosterKeepsEarlierWritesWhenALaterOneFails(t *testing.T) {
+	sentinel := errors.New("google unavailable")
 	groups := &fakeGroups{
-		// direct is what ListGroupsForUser answers: deliberately stale, as if Google
-		// has not propagated the write.
+		members:     map[string][]string{"general": {}, "engineering": {}},
+		writeErrFor: map[string]error{"engineering": sentinel},
+	}
+
+	if _, _, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", []user.GroupRole{
+		{Key: "engineering"},
+	}); !errors.Is(err, sentinel) {
+		t.Fatalf("got %v, want the failure to propagate", err)
+	}
+
+	if got := strings.Join(groups.addedGroups(), ","); got != "general" {
+		t.Fatalf("got writes %q, want the login group left in place", got)
+	}
+}
+
+// The Directory API is eventually consistent, so the read-back after the write can still
+// be missing the memberships that were just created. Reporting a list without them would
+// look exactly like the write having been undone.
+func TestAddToRosterReportsEveryRequestedListEvenIfTheReadBackLags(t *testing.T) {
+	groups := &fakeGroups{
+		// direct is what ListGroupsForUser answers: deliberately stale, as if Google has
+		// not propagated the writes.
 		direct:  map[string][]string{"alice@example.com": {}},
-		members: map[string][]string{"general": {}},
+		members: map[string][]string{"general": {}, "engineering": {}},
 	}
 
-	keys, _, err := newService(t, groups).AddToLoginGroup(t.Context(), "alice@example.com", "")
+	keys, _, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", []user.GroupRole{
+		{Key: "engineering"},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Join(keys, ",") != "general" {
-		t.Fatalf("got %v, want the login group present despite the lagging read", keys)
+
+	if strings.Join(keys, ",") != "general,engineering" {
+		t.Fatalf("got %v, want both lists present despite the lagging read", keys)
 	}
 }
 
-// ...and it must not be listed twice once the read-back does catch up.
-func TestAddToLoginGroupDoesNotDuplicateTheLoginGroup(t *testing.T) {
+// ...and they must not be listed twice once the read-back does catch up.
+func TestAddToRosterDoesNotDuplicateLists(t *testing.T) {
 	groups := &fakeGroups{
-		direct:  map[string][]string{"alice@example.com": {"general"}},
-		members: map[string][]string{"general": {}},
+		direct:  map[string][]string{"alice@example.com": {"general", "engineering"}},
+		members: map[string][]string{"general": {}, "engineering": {}},
 	}
 
-	keys, _, err := newService(t, groups).AddToLoginGroup(t.Context(), "alice@example.com", "")
+	keys, _, err := newService(t, groups).AddToRoster(t.Context(), "alice@example.com", []user.GroupRole{
+		{Key: "engineering"},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Join(keys, ",") != "general" {
-		t.Fatalf("got %v, want a single entry", keys)
+
+	if strings.Join(keys, ",") != "general,engineering" {
+		t.Fatalf("got %v, want one entry each", keys)
 	}
 }
 
-func TestRemoveFromLoginGroupTargetsTheConfiguredList(t *testing.T) {
-	groups := &fakeGroups{members: map[string][]string{"general": {}}}
+// Leaving someone on the lists that carry the club's mail is not "removing them from the
+// club", so every list goes -- and the login group goes last, so a failure part-way
+// through leaves them on the roster where they are still visible.
+func TestRemoveFromRosterRemovesEveryListWithTheLoginGroupLast(t *testing.T) {
+	groups := &fakeGroups{
+		direct: map[string][]string{"leaver@example.com": {"general", "engineering", "design"}},
+	}
 
-	if err := newService(t, groups).RemoveFromLoginGroup(t.Context(), "alice@example.com"); err != nil {
+	if err := newService(t, groups).RemoveFromRoster(t.Context(), "leaver@example.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(groups.removed) != 1 || groups.removed[0] != [2]string{"general", "alice@example.com"} {
-		t.Fatalf("got %v", groups.removed)
+
+	// Organizational order for the rest -- expand already sorts them -- and the login
+	// group last.
+	if got := strings.Join(groups.removedGroups(), ","); got != "design,engineering,general" {
+		t.Fatalf("got removal order %q, want the login group last", got)
+	}
+}
+
+// The hidden system lists are dropped from every view, but they still deliver mail, so
+// removal must not go through visibleKeys.
+func TestRemoveFromRosterRemovesHiddenLists(t *testing.T) {
+	groups := &fakeGroups{
+		direct: map[string][]string{"leaver@example.com": {"general", "info"}},
+	}
+
+	if err := newService(t, groups).RemoveFromRoster(t.Context(), "leaver@example.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := strings.Join(groups.removedGroups(), ","); got != "info,general" {
+		t.Fatalf("got %q, want the hidden list removed too", got)
+	}
+}
+
+// Someone added moments ago may not show up on their own group list yet, and leaving them
+// on the login group would leave them able to sign in.
+func TestRemoveFromRosterAlwaysRemovesTheLoginGroup(t *testing.T) {
+	groups := &fakeGroups{direct: map[string][]string{"leaver@example.com": {}}}
+
+	if err := newService(t, groups).RemoveFromRoster(t.Context(), "leaver@example.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(groups.removed) != 1 || groups.removed[0] != [2]string{"general", "leaver@example.com"} {
+		t.Fatalf("got %v, want the login group removed anyway", groups.removed)
+	}
+}
+
+// Removing someone who is not on a list asks for a state that already holds. Google says
+// so with a 400 rather than a 404, so both spellings have to count.
+func TestRemoveFromRosterTreatsAMissingMembershipAsSuccess(t *testing.T) {
+	for _, sentinel := range []error{googlegroup.ErrMemberNotFound, googlegroup.ErrInvalidMemberRequest} {
+		groups := &fakeGroups{
+			direct:      map[string][]string{"ghost@example.com": {"general", "engineering"}},
+			writeErrFor: map[string]error{"general": sentinel, "engineering": sentinel},
+		}
+
+		if err := newService(t, groups).RemoveFromRoster(t.Context(), "ghost@example.com"); err != nil {
+			t.Fatalf("got %v, want %v to be treated as success", err, sentinel)
+		}
+	}
+}
+
+func TestRemoveFromRosterPropagatesRealFailures(t *testing.T) {
+	sentinel := errors.New("google unavailable")
+	groups := &fakeGroups{
+		direct:      map[string][]string{"leaver@example.com": {"general", "engineering"}},
+		writeErrFor: map[string]error{"engineering": sentinel},
+	}
+
+	if err := newService(t, groups).RemoveFromRoster(t.Context(), "leaver@example.com"); !errors.Is(err, sentinel) {
+		t.Fatalf("got %v, want the failure to propagate", err)
+	}
+	if len(groups.removed) != 0 {
+		t.Fatalf("the login group must not be removed after a failure: %v", groups.removed)
+	}
+}
+
+// The group list and the member lists are read seconds apart when the cache is cold, and
+// the group list is shared -- GET /api/groups sorts it into organizational order. Pairing
+// a group with its members by position after the fact therefore attributed everyone to
+// whichever group had moved into that slot, which is how people ended up on committee
+// without being on it.
+func TestRosterGroupKeysSurvivesTheGroupListBeingReordered(t *testing.T) {
+	shared := []googlegroup.Group{{Email: "committee"}, {Email: "design"}, {Email: "general"}}
+
+	groups := &fakeGroups{
+		members: map[string][]string{
+			"general":   {"alice@example.com", "bob@example.com"},
+			"committee": {"alice@example.com"},
+			"design":    {"bob@example.com"},
+		},
+		groupList: shared,
+		gate:      make(chan struct{}),
+		entered:   make(chan struct{}, 8),
+	}
+
+	type result struct {
+		keys map[string][]string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		keys, err := newService(t, groups).RosterGroupKeys(context.Background())
+		done <- result{keys, err}
+	}()
+
+	// Wait until every member read is in flight, then reorder the list underneath them.
+	for range shared {
+		<-groups.entered
+	}
+	sort.Slice(shared, func(i, j int) bool { return shared[i].Email > shared[j].Email })
+	close(groups.gate)
+
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("unexpected error: %v", got.err)
+	}
+
+	if strings.Join(got.keys["alice@example.com"], ",") != "general,committee" {
+		t.Fatalf("alice: got %v, want [general committee]", got.keys["alice@example.com"])
+	}
+	if strings.Join(got.keys["bob@example.com"], ",") != "general,design" {
+		t.Fatalf("bob: got %v, want [general design]", got.keys["bob@example.com"])
 	}
 }

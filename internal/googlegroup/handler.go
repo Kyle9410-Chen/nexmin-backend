@@ -346,21 +346,26 @@ func (h *Handler) ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Organizational order, not the alphabetical order Google happens to return: a flat
-	// A-Z list of 34 addresses carries no structure. Unclassified lists sort last, and
-	// ties fall back to the key so the order is stable.
-	sort.Slice(groups, func(i, j int) bool {
-		oi, oj := h.chart.Order(groups[i].Email), h.chart.Order(groups[j].Email)
-		if oi != oj {
-			return oi < oj
-		}
-		return groups[i].Email < groups[j].Email
-	})
-
 	items := make([]GroupResponse, 0, len(groups))
 	for _, g := range groups {
 		items = append(items, h.newGroupResponse(g))
 	}
+
+	// Organizational order, not the alphabetical order Google happens to return: a flat
+	// A-Z list of 34 addresses carries no structure. Unclassified lists sort last, and
+	// ties fall back to the key so the order is stable.
+	//
+	// The response slice is sorted rather than the one the store handed back: that one
+	// used to be the group cache's own array, and reordering it corrupted the roster,
+	// which was reading it at the same time. The cache copies now, but sorting something
+	// this handler built itself is what makes the mistake impossible to repeat.
+	sort.Slice(items, func(i, j int) bool {
+		oi, oj := h.chart.Order(items[i].Email), h.chart.Order(items[j].Email)
+		if oi != oj {
+			return oi < oj
+		}
+		return items[i].Email < items[j].Email
+	})
 
 	handlerutil.WriteJSONResponse(w, http.StatusOK, ListGroupsResponse{
 		Items:      items,

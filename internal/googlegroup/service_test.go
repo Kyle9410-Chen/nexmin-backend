@@ -3,10 +3,13 @@ package googlegroup
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi"
 )
@@ -206,5 +209,38 @@ func TestWriteMethodsRequireConfiguration(t *testing.T) {
 	}
 	if err := s.RemoveMember(t.Context(), "group@example.com", "user@example.com"); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("RemoveMember: got %v, want ErrNotConfigured", err)
+	}
+}
+
+// ListGroupsHandler sorts the group list into organizational order. It must not be able
+// to reorder what the next caller -- notably the roster, which reads the same list -- is
+// given.
+func TestListGroupsDoesNotHandOutTheCachedSlice(t *testing.T) {
+	s := &Service{
+		logger:     testLogger(t),
+		tracer:     otel.Tracer("googlegroup/test"),
+		groupCache: newCache[Group](time.Minute),
+		configured: true,
+	}
+	s.groupCache.set(allGroupsCacheKey, s.groupCache.begin(), []Group{
+		{Email: "administration"}, {Email: "branding"}, {Email: "committee"},
+	})
+
+	first, err := s.ListGroups(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sort.Slice(first, func(i, j int) bool { return first[i].Email > first[j].Email })
+
+	second, err := s.ListGroups(t.Context())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"administration", "branding", "committee"}
+	for i, w := range want {
+		if second[i].Email != w {
+			t.Fatalf("got %v, want %v -- the first caller reordered the cache", second, want)
+		}
 	}
 }

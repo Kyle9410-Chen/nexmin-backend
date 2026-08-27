@@ -107,6 +107,19 @@ model RosterProfile {
   updatedAt: utcDateTime;
 }
 
+/** One mailing list to put a new member on, and the role to give them there. */
+model GroupMembership {
+  /** Bare group name, full address, alias or immutable ID — every spelling the group
+   * routes accept. A key that names no list in the account is rejected with 400, before
+   * anything is written. */
+  @example("engineering")
+  key: string;
+
+  /** The role on **that list**, not this service's role. Omit for `MEMBER`, which is
+   * Google's own default. */
+  role?: Groups.MemberRole;
+}
+
 /**
  * Adds someone to the club.
  */
@@ -115,14 +128,19 @@ model AddRosterMemberRequest {
   email: email;
 
   /**
-   * The role on the **login mailing list**, not this service's role. Omit for `MEMBER`,
-   * which is Google's own default.
+   * The mailing lists to put them on **beyond the login group**, which is always written
+   * and does not have to be named — callers do not need to know its address. Omit or
+   * send `[]` to add them to the login group alone.
    *
-   * `MANAGER` and `OWNER` of the login group map onto this service's `admin`, so
-   * setting either **grants administrative access** — the endpoint is named for adding
-   * a member, but this field is how admin is handed out.
+   * Naming the login group anyway is allowed, and is how a role is set on it: `MANAGER`
+   * or `OWNER` there maps onto this service's `admin`, so listing it that way **grants
+   * administrative access**.
+   *
+   * Listing the same list twice is rejected with 400 — two roles for one list is not a
+   * request that can be satisfied.
    */
-  role?: Groups.MemberRole;
+  @example(#[#{ key: "engineering" }, #{ key: "core-system", role: "MANAGER" }])
+  groups?: GroupMembership[];
 }
 
 /**
@@ -290,21 +308,30 @@ op listUsers():
   | Errors.ServiceUnavailableProblem;
 
 /**
- * Add someone to the club.
+ * Add someone to the club, and to whichever mailing lists they should be on.
  *
  * There is no local account to create: the login mailing list is what decides who
  * exists, so adding someone to it *is* the whole operation. A local row appears by
  * itself the first time they sign in, which is why the entry comes back with
  * `profile: null` for anyone new.
  *
- * The list written to is whichever one `google_group.login_group` names — the same one
- * the sign-in gate reads — so this also decides who can sign in. Callers do not need to
- * know its address.
+ * The login group is whichever one `google_group.login_group` names — the same list the
+ * sign-in gate reads — and it is always written, so callers do not need to know its
+ * address. Everything in `groups` is written on top of it.
  *
- * The returned `groups` always contains the login group, even though the Directory API
- * may not report the new membership for a moment yet.
+ * **Being on a list already is not an error.** The request says where the person should
+ * end up, and that part of it is simply already true — which is also what makes this
+ * endpoint usable to add more lists to somebody who is already a member.
  *
- * 409 means they are already on the list.
+ * Roles and group keys are validated **before** anything is written, so a typo costs
+ * nothing rather than leaving them on half the lists. Once writing starts the operation
+ * is **not atomic**: a failure part-way through leaves the earlier lists written and does
+ * not roll them back. Nothing needs undoing though — every write is idempotent, so
+ * repeating the identical request is always safe.
+ *
+ * The returned `groups` always contains the login group and everything that was asked
+ * for, even though the Directory API may not report the new memberships for a moment yet.
+ * Lists in sections the org chart marks hidden are omitted, as everywhere else.
  */
 @summary("Add someone to the club")
 @useAuth(BearerAuth)
@@ -319,13 +346,23 @@ op addUser(@body body: AddRosterMemberRequest):
   | Errors.UnauthorizedProblem
   | Errors.ForbiddenProblem
   | Errors.NotFoundProblem
-  | Errors.ConflictProblem
   | Errors.ServiceUnavailableProblem;
 
 /**
- * Remove someone from the club, by taking them off the login mailing list. They stop
- * appearing on the roster and can no longer sign in; their profile row is left alone,
- * so it comes back if they are added again.
+ * Remove someone from the club: off **every** mailing list they are listed on, not just
+ * the login group. They stop appearing on the roster, can no longer sign in, and stop
+ * receiving the club's mail. Their profile row is left alone, so it comes back if they
+ * are ever added again.
+ *
+ * Taking them off the login group alone would end their access while leaving them on the
+ * lists that actually carry the mail, which is not what removing someone from the club
+ * means to anyone reading it. The hidden system lists go too — nobody displays them, but
+ * they still deliver.
+ *
+ * The login group is removed **last**, so a failure part-way through leaves the person on
+ * the roster, where they are still visible and the request can simply be repeated. Like
+ * `POST /users` this is **not atomic** and nothing is rolled back; every removal is
+ * idempotent, so repeating the identical request is always safe.
  *
  * Addressed by email rather than the UUID `GET /users/{user_id}` takes, because someone
  * who has never signed in has no local row and therefore no UUID — and they are exactly
@@ -334,11 +371,9 @@ op addUser(@body body: AddRosterMemberRequest):
  * **Nothing stops an admin removing themselves**, which leaves them unable to sign back
  * in; recovering means being re-added from the Google admin console.
  *
- * Removing an address that is not on the list answers **400**, not 404, and the detail
- * reads `Missing required field: memberKey` — that is Google's own wording for "this
- * member key resolves to nothing", passed through unchanged. 404 here means the login
- * group itself could not be found, which points at `google_group.login_group` being
- * misconfigured.
+ * Removing an address that is on none of the lists answers **204**: it asks for a state
+ * that already holds. 404 means the login group itself could not be found, which points
+ * at `google_group.login_group` being misconfigured.
  */
 @summary("Remove someone from the club")
 @useAuth(BearerAuth)
