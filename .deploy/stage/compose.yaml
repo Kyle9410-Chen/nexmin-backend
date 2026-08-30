@@ -49,6 +49,12 @@ services:
       - GOOGLE_LOGIN_GROUP=${GOOGLE_LOGIN_GROUP:-}
       - GOOGLE_GROUP_DOMAIN=${GOOGLE_GROUP_DOMAIN:-}
       - GOOGLE_GROUP_CACHE_TTL=${GOOGLE_GROUP_CACHE_TTL:-}
+      - GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID:-}
+      - GOOGLE_SHEET_NAME=${GOOGLE_SHEET_NAME:-}
+      - GOOGLE_SHEET_EMAIL_COLUMN=${GOOGLE_SHEET_EMAIL_COLUMN:-}
+      - GOOGLE_SHEET_NAME_COLUMN=${GOOGLE_SHEET_NAME_COLUMN:-}
+      - GOOGLE_SHEET_NICKNAME_COLUMN=${GOOGLE_SHEET_NICKNAME_COLUMN:-}
+      - GOOGLE_SHEET_HEADER_ROWS=${GOOGLE_SHEET_HEADER_ROWS:-}
     # No healthcheck: the distroless image has no shell and no curl, so any test here
     # would report unhealthy forever. Check it from the host instead:
     #   curl -fsS http://localhost:8082/api/healthz

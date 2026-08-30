@@ -12,6 +12,7 @@ import (
 	"nycu-sdc/nexmin/internal/auth/oauthprovider"
 	"nycu-sdc/nexmin/internal/config"
 	"nycu-sdc/nexmin/internal/cors"
+	"nycu-sdc/nexmin/internal/directory"
 	"nycu-sdc/nexmin/internal/googlegroup"
 	"nycu-sdc/nexmin/internal/jwt"
 	"nycu-sdc/nexmin/internal/membership"
@@ -47,6 +48,12 @@ var Environment = "no-env"
 const (
 	accessTokenTTL  = 15 * time.Minute
 	refreshTokenTTL = 24 * time.Hour
+
+	// directorySyncTimeout bounds the one-off profile sync that runs before the server
+	// starts listening. It runs inline rather than in a goroutine so the port opens with
+	// the data already in place; the timeout is what keeps a slow or hanging Google from
+	// turning that into a startup that never finishes.
+	directorySyncTimeout = 30 * time.Second
 )
 
 func main() {
@@ -154,6 +161,45 @@ func main() {
 		logger.Fatal("Failed to load the organization chart", zap.Error(err))
 	}
 	membershipService := membership.NewService(logger, googleGroupService, chart, cfg.GoogleGroup.LoginGroup)
+
+	// Seed profiles for club members who have not signed in yet, so the roster shows
+	// names rather than bare addresses from the first request onwards.
+	//
+	// Unlike orgchart.Load above this never stops startup: it reads a spreadsheet and a
+	// mailing list, both of which are external services that can be absent, unshared or
+	// simply down, and none of the rest of the API depends on it having run.
+	directoryService, err := directory.NewService(logger, cfg.GoogleSheet, cfg.GoogleGroup.ServiceAccountKey, cfg.GoogleGroup.LoginGroup, googleGroupService, userService)
+	if err != nil {
+		logger.Warn("Failed to initialize the directory sync, skipping it", zap.Error(err))
+	} else if !directoryService.Enabled() {
+		// Says so at the point the sync would have run. NewService already reported
+		// which setting is missing, but that line is far up the log and easy to read as
+		// a warning about something else -- whereas "did this step run at all" is the
+		// first question anyone asks when a name fails to appear.
+		logger.Info("Directory sync is not configured, skipping it")
+	} else {
+		logger.Info("Starting directory profile sync...")
+
+		syncStartedAt := time.Now()
+		syncCtx, cancelSync := context.WithTimeout(context.Background(), directorySyncTimeout)
+		report, syncErr := directoryService.SyncOnce(syncCtx)
+		cancelSync()
+
+		if syncErr != nil {
+			logger.Warn("Directory sync failed, continuing without it",
+				zap.Duration("took", time.Since(syncStartedAt)),
+				zap.Error(syncErr))
+		} else {
+			logger.Info("Directory sync complete",
+				zap.Duration("took", time.Since(syncStartedAt)),
+				zap.Int("rows_read", report.RowsRead),
+				zap.Int("seeded", report.Seeded),
+				zap.Int("skipped", report.Skipped),
+				zap.Int("not_on_login_group", report.NotOnLoginGroup),
+				zap.Int("duplicate", report.Duplicate),
+				zap.Int("invalid", report.Invalid))
+		}
+	}
 
 	// Handler
 	validate := validator.New()

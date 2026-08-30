@@ -51,3 +51,40 @@ google_group:
   # `domain` above, so "general" and "general@sdc.nycu.club" are equivalent here.
   # Env: GOOGLE_LOGIN_GROUP
   login_group: ""
+
+# The club's Google Form response sheet. At startup, and only at startup, every member
+# of `google_group.login_group` who has no local row yet gets one created from this
+# sheet, so the roster shows names instead of bare addresses before anyone has signed
+# in. Rows that already exist are never touched and nothing is written back.
+#
+# Leave spreadsheet_id empty to turn the whole thing off; the sync also needs a service
+# account key and a login group, and simply does not run without any of the three.
+#
+# It reuses `google_group.service_account_key` above -- there is deliberately no second
+# key here. Share the sheet with the *service account's own address* (Viewer); this does
+# not use domain-wide delegation, so it needs no change in the Workspace admin console.
+# The Sheets API must be enabled in the key's GCP project, which is separate from the
+# Admin SDK being enabled there.
+google_sheet:
+  # From the sheet's URL: docs.google.com/spreadsheets/d/<id>/edit
+  # Env: GOOGLE_SHEET_ID
+  spreadsheet_id: ""
+
+  # The tab to read. Google Forms names it after the form.
+  # Env: GOOGLE_SHEET_NAME
+  sheet_name: "表單回應 1"
+
+  # Which column holds what, as spreadsheet letters. A form's layout is decided by the
+  # form itself -- column A is the timestamp, column B the address when the form
+  # collects one, and the answers follow in question order -- so there is no sensible
+  # default and these must be set. The header row is logged at startup, which is the
+  # quickest way to check they point where you think they do.
+  # Env: GOOGLE_SHEET_EMAIL_COLUMN / GOOGLE_SHEET_NAME_COLUMN / GOOGLE_SHEET_NICKNAME_COLUMN
+  email_column: ""
+  name_column: ""
+  nickname_column: ""
+
+  # How many leading rows to skip. Cannot be 0 -- config merging reads a zero int as
+  # "unset" -- which costs nothing, since a Forms sheet always has a header row.
+  # Env: GOOGLE_SHEET_HEADER_ROWS
+  header_rows: 1

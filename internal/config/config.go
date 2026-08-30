@@ -5,8 +5,10 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"strconv"
 	"strings"
 
+	"nycu-sdc/nexmin/internal/directory"
 	"nycu-sdc/nexmin/internal/googlegroup"
 
 	configutil "github.com/NYCU-SDC/summer/pkg/config"
@@ -34,6 +36,7 @@ type Config struct {
 	GoogleOauthClientSecret string `yaml:"google_oauth_client_secret" envconfig:"GOOGLE_OAUTH_CLIENT_SECRET"`
 
 	GoogleGroup googlegroup.Config `yaml:"google_group"`
+	GoogleSheet directory.Config   `yaml:"google_sheet"`
 }
 
 type LogBuffer struct {
@@ -95,6 +98,14 @@ func Load() (Config, *LogBuffer) {
 			// live somewhere else; set it empty to keep full addresses.
 			Domain: "sdc.nycu.club",
 		},
+		GoogleSheet: directory.Config{
+			// Google Forms names the response tab after the form; this is the default
+			// only so a sheet that was never renamed works without extra config. The
+			// column letters get no default -- they are decided by the form's own
+			// question order, so guessing them would silently read the wrong field.
+			SheetName:  "表單回應 1",
+			HeaderRows: 1,
+		},
 	}
 
 	var err error
@@ -133,11 +144,18 @@ func mergeConfig(base, override *Config) (*Config, error) {
 	// otherwise clobber what this pointer refers to.
 	mergedGoogleGroup := *googleGroup
 
+	googleSheet, err := configutil.Merge[directory.Config](&base.GoogleSheet, &override.GoogleSheet)
+	if err != nil {
+		return nil, err
+	}
+	mergedGoogleSheet := *googleSheet
+
 	merged, err := configutil.Merge[Config](base, override)
 	if err != nil {
 		return nil, err
 	}
 	merged.GoogleGroup = mergedGoogleGroup
+	merged.GoogleSheet = mergedGoogleSheet
 
 	return merged, nil
 }
@@ -187,6 +205,19 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		}
 	}
 
+	// HeaderRows is the one numeric setting here, so it is parsed rather than passed
+	// through. An unreadable value is ignored instead of failing: it only decides how
+	// many rows to skip, and refusing to start over it would be out of proportion.
+	headerRows := 0
+	if raw := os.Getenv("GOOGLE_SHEET_HEADER_ROWS"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil {
+			logger.Warn("GOOGLE_SHEET_HEADER_ROWS is not a number, ignoring it", parseErr, map[string]string{"value": raw})
+		} else {
+			headerRows = parsed
+		}
+	}
+
 	envConfig := &Config{
 		Debug:           os.Getenv("DEBUG") == "true",
 		Host:            os.Getenv("HOST"),
@@ -206,6 +237,15 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 			CacheTTL:           os.Getenv("GOOGLE_GROUP_CACHE_TTL"),
 			Domain:             os.Getenv("GOOGLE_GROUP_DOMAIN"),
 			LoginGroup:         os.Getenv("GOOGLE_LOGIN_GROUP"),
+		},
+
+		GoogleSheet: directory.Config{
+			SpreadsheetID:  os.Getenv("GOOGLE_SHEET_ID"),
+			SheetName:      os.Getenv("GOOGLE_SHEET_NAME"),
+			EmailColumn:    os.Getenv("GOOGLE_SHEET_EMAIL_COLUMN"),
+			NameColumn:     os.Getenv("GOOGLE_SHEET_NAME_COLUMN"),
+			NicknameColumn: os.Getenv("GOOGLE_SHEET_NICKNAME_COLUMN"),
+			HeaderRows:     headerRows,
 		},
 	}
 
@@ -227,6 +267,12 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.GoogleGroup.CacheTTL, "google_group_cache_ttl", "", "mailing list member cache TTL, e.g. 5m")
 	flag.StringVar(&flagConfig.GoogleGroup.Domain, "google_group_domain", "", "workspace domain the club's groups live in, e.g. sdc.nycu.club")
 	flag.StringVar(&flagConfig.GoogleGroup.LoginGroup, "google_login_group", "", "mailing list whose members may sign in")
+	flag.StringVar(&flagConfig.GoogleSheet.SpreadsheetID, "google_sheet_id", "", "spreadsheet holding the club's form responses; empty disables the startup profile sync")
+	flag.StringVar(&flagConfig.GoogleSheet.SheetName, "google_sheet_name", "", "tab within that spreadsheet, e.g. 表單回應 1")
+	flag.StringVar(&flagConfig.GoogleSheet.EmailColumn, "google_sheet_email_column", "", "column letter holding the member's address, e.g. B")
+	flag.StringVar(&flagConfig.GoogleSheet.NameColumn, "google_sheet_name_column", "", "column letter holding the member's name")
+	flag.StringVar(&flagConfig.GoogleSheet.NicknameColumn, "google_sheet_nickname_column", "", "column letter holding the member's nickname")
+	flag.IntVar(&flagConfig.GoogleSheet.HeaderRows, "google_sheet_header_rows", 0, "how many leading rows of the sheet to skip")
 	flag.StringVar(&flagConfig.FrontendURL, "frontend_url", "", "frontend URL to redirect to after login")
 	flag.StringVar(&flagConfig.GoogleOauthClientID, "google_oauth_client_id", "", "google OAuth client ID")
 	flag.StringVar(&flagConfig.GoogleOauthClientSecret, "google_oauth_client_secret", "", "google OAuth client secret")

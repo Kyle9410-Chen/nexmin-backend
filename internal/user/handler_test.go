@@ -465,7 +465,8 @@ func TestListHandlerReturnsTheRoster(t *testing.T) {
 		t.Fatalf("got groups %v, want the mailing lists they reach", signedIn.Groups)
 	}
 
-	// On the mailing list, never signed in: present, but with no profile.
+	// On the mailing list, but nothing known about them locally -- no sign-in and no
+	// row seeded from the sign-up sheet: present, with a null profile.
 	newcomer := byEmail["newcomer@example.com"]
 	if newcomer.Profile != nil {
 		t.Fatalf("expected a null profile, got %+v", *newcomer.Profile)
@@ -490,7 +491,7 @@ func TestListHandlerSortsByDisplayedName(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("failed to decode response %q: %v", rec.Body.String(), err)
 	}
-	// "aaron@example.com" (no profile, sorts on its address) before "Kai Chen".
+	// "aaron@example.com" has no local row, so it sorts on its address, before "Kai Chen".
 	if got.Items[0].Email != "aaron@example.com" {
 		t.Fatalf("got %q first, want aaron@example.com", got.Items[0].Email)
 	}
@@ -518,8 +519,9 @@ func decodeEntry(t *testing.T, rec *httptest.ResponseRecorder) RosterEntry {
 	return got
 }
 
-// Adding someone to the club creates no local row -- one appears when they first sign
-// in -- so the entry comes back with a null profile.
+// Adding someone to the club creates no local row: one appears when they first sign in,
+// or at the next restart if the sign-up sheet already lists them. Neither has happened
+// here, so the entry comes back with a null profile.
 func TestAddHandlerReturnsTheNewEntry(t *testing.T) {
 	roster := &fakeRoster{groups: []string{"general"}}
 

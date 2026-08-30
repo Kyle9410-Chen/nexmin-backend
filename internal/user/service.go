@@ -175,6 +175,28 @@ func (s *Service) UpdateRole(ctx context.Context, id uuid.UUID, role string) (Us
 	return user, nil
 }
 
+// SeedProfile creates a row for someone who is on the club's mailing list but has not
+// signed in yet, so the roster can show their name rather than a bare address. It
+// reports whether a row was actually created.
+//
+// An existing row is never touched. Name and nickname belong to the user from the
+// moment their row exists, exactly as in FindOrCreateByEmail, so "already there" is a
+// success and not a conflict -- which is also what makes the startup sync idempotent.
+func (s *Service) SeedProfile(ctx context.Context, email, name, nickname string) (bool, error) {
+	traceCtx, span := s.tracer.Start(ctx, "SeedProfile")
+	defer span.End()
+	logger := logutil.WithContext(traceCtx, s.logger)
+
+	rows, err := s.queries.SeedProfile(traceCtx, SeedProfileParams{Email: email, Name: name, Nickname: nickname})
+	if err != nil {
+		err = databaseutil.WrapDBErrorWithKeyValue(err, "users", "email", email, logger, "seed user profile")
+		span.RecordError(err)
+		return false, err
+	}
+
+	return rows > 0, nil
+}
+
 // optionalText maps a nil pointer onto a NULL parameter, which the COALESCE in
 // UpdateProfile reads as "leave this column alone".
 func optionalText(value *string) pgtype.Text {

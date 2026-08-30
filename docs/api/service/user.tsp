@@ -88,8 +88,11 @@ model UpdateProfileRequest {
 }
 
 /**
- * What this service knows about someone beyond their membership. It exists only once
- * they have signed in at least once.
+ * What this service knows about someone beyond their membership.
+ *
+ * It exists once they have signed in, or once the startup sync has seeded them from the
+ * club's sign-up sheet -- whichever happens first. Only the person themselves can edit
+ * it afterwards; nothing overwrites a profile that already exists.
  */
 model RosterProfile {
   id: uuid;
@@ -148,7 +151,7 @@ model AddRosterMemberRequest {
  *
  * The roster comes from the login mailing list, not from this service's database: the
  * list decides who exists, and the local row -- when there is one -- only supplies the
- * profile they filled in here.
+ * profile, whether that came from the sign-up sheet or from the person editing it.
  */
 model RosterEntry {
   @example("member@example.com")
@@ -163,7 +166,8 @@ model RosterEntry {
   @example(#["general", "engineering"])
   groups: string[];
 
-  /** Null for someone who is on the mailing list but has never signed in here. */
+  /** Null when nothing is known about this person beyond their address: they have
+   * never signed in, and the sign-up sheet has no usable row for them either. */
   profile: RosterProfile | null;
 }
 
@@ -282,7 +286,7 @@ op getMyGroups():
  *
  * The mailing list is the source of who exists; the `users` table is an extension of
  * it, holding only what this service owns. So an entry with `profile: null` is a real
- * club member who simply has not used this service yet, and the count here is the club,
+ * club member this service knows nothing else about, and the count here is the club,
  * not the set of local accounts.
  *
  * Membership is direct only: someone reachable through a nested group but not listed on
@@ -312,8 +316,9 @@ op listUsers():
  *
  * There is no local account to create: the login mailing list is what decides who
  * exists, so adding someone to it *is* the whole operation. A local row appears by
- * itself the first time they sign in, which is why the entry comes back with
- * `profile: null` for anyone new.
+ * itself the first time they sign in -- or at the next restart, if the club's sign-up
+ * sheet already has them -- which is why the entry comes back with `profile: null` for
+ * anyone new.
  *
  * The login group is whichever one `google_group.login_group` names — the same list the
  * sign-in gate reads — and it is always written, so callers do not need to know its
@@ -365,8 +370,8 @@ op addUser(@body body: AddRosterMemberRequest):
  * idempotent, so repeating the identical request is always safe.
  *
  * Addressed by email rather than the UUID `GET /users/{user_id}` takes, because someone
- * who has never signed in has no local row and therefore no UUID — and they are exactly
- * the people a roster edit is most likely to touch.
+ * with no local row has no UUID — and they are exactly the people a roster edit is most
+ * likely to touch.
  *
  * **Nothing stops an admin removing themselves**, which leaves them unable to sign back
  * in; recovering means being re-added from the Google admin console.
